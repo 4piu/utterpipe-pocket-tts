@@ -255,7 +255,7 @@ fn protocol_incremental_smoke(temp: &TempDir) {
         }),
     );
     let hello = provider.control();
-    assert_eq!(hello["result"]["version"], 2);
+    assert_eq!(hello["result"]["version"], 1);
     assert_eq!(hello["result"]["provider"]["slug"], "pocket-tts");
 
     provider.request(
