@@ -43,6 +43,12 @@ curl -fsSL https://raw.githubusercontent.com/4piu/utterpipe-pocket-tts/main/inst
 irm https://raw.githubusercontent.com/4piu/utterpipe-pocket-tts/main/install.ps1 | iex
 ```
 
+The same one-line command handles initial installation, reinstallation, and
+updates. Run it again to verify and replace the executable with the current
+latest release; installed models and imported voices are left untouched. Stop
+running provider instances first, especially on Windows where an active
+executable may be locked.
+
 Remove the executable while preserving models and imported voices with:
 
 ```sh
