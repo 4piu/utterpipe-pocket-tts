@@ -13,9 +13,9 @@ serve repeated sequential utterances without Python or a child service.
 
 Version 0.1 pins one converted int8 model,
 `pocket-tts-int8-2026-01-26`, and statically links sherpa-onnx 1.13.4. macOS
-arm64, Linux x86_64, and Windows x86_64 are verified locally. A release target
-is publishable only after the same native inference, conformance, and dependency
-checks pass in release CI.
+arm64, Linux x86_64, and Windows x86_64 are verified locally. Release CI must
+pass real native inference, cancellation, shared-lease, packaging, and
+dependency checks before publishing any target.
 
 The converted model archive discloses CC-BY-4.0 terms, upstream acceptable-use
 conditions, and an explicit non-commercial notice. The preparation command
@@ -101,6 +101,7 @@ The verified sherpa native archives are:
 | Target | Archive | SHA-256 |
 | --- | --- | --- |
 | macOS arm64 | `sherpa-onnx-v1.13.4-osx-arm64-static-lib.tar.bz2` | `57801db2bbb786a5d343f515a38ff210b401842338bdc804fa075312d1cd2404` |
+| macOS x86_64 | `sherpa-onnx-v1.13.4-osx-x64-static-lib.tar.bz2` | `2bda2c10b31a1cfc45d9f9e14bd4983743ec3779d309e42d99a6c8fa1689043f` |
 | Linux x86_64 | `sherpa-onnx-v1.13.4-linux-x64-static-lib.tar.bz2` | `98b0e31996426f6e78244dbce1955548f2c64e8f01c4be75b85af7cdaa2e8d5c` |
 | Windows x86_64 | `sherpa-onnx-v1.13.4-win-x64-static-MT-Release-lib.tar.bz2` | `d81bd1d25112540862d2387072e76b2b6843ef962918d6b5c7db5a19c6276b4c` |
 
@@ -113,10 +114,18 @@ Run the ordinary and opt-in real-model tests with:
 SHERPA_ONNX_ARCHIVE_DIR=/absolute/sherpa-onnx-prebuilt cargo test --locked --all-targets
 
 UTTERPIPE_POCKET_MODEL_ARCHIVE=/absolute/pinned-model.tar.bz2 \
-UTTERPIPE_POCKET_REFERENCE_WAV=/absolute/reference.wav \
 SHERPA_ONNX_ARCHIVE_DIR=/absolute/sherpa-onnx-prebuilt \
   cargo test --locked --test real_model -- --ignored --nocapture
 ```
+
+The native test generates a deterministic synthetic reference by default so CI
+does not depend on a person's voice. Set `UTTERPIPE_POCKET_REFERENCE_WAV` to an
+absolute user-approved reference when performing an optional listening test.
+
+Tagged release archives contain the provider executable and its documentation,
+not the model or a voice. Each archive has a SHA-256 checksum; corresponding
+source and a CycloneDX SBOM are separate release assets. Artifacts are unsigned
+unless their release notes state otherwise.
 
 ## Cancellation boundary
 

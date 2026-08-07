@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x64
+            runner: ubuntu-latest
+            archive: sherpa-onnx-v1.13.4-linux-x64-static-lib.tar.bz2
+            sha256: 98b0e31996426f6e78244dbce1955548f2c64e8f01c4be75b85af7cdaa2e8d5c
+          - name: macOS arm64
+            runner: macos-15
+            archive: sherpa-onnx-v1.13.4-osx-arm64-static-lib.tar.bz2
+            sha256: 57801db2bbb786a5d343f515a38ff210b401842338bdc804fa075312d1cd2404
+          - name: macOS x64
+            runner: macos-15-intel
+            archive: sherpa-onnx-v1.13.4-osx-x64-static-lib.tar.bz2
+            sha256: 2bda2c10b31a1cfc45d9f9e14bd4983743ec3779d309e42d99a6c8fa1689043f
+          - name: Windows x64
+            runner: windows-latest
+            archive: sherpa-onnx-v1.13.4-win-x64-static-MT-Release-lib.tar.bz2
+            sha256: d81bd1d25112540862d2387072e76b2b6843ef962918d6b5c7db5a19c6276b4c
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@1.88.0
+        with:
+          components: clippy, rustfmt
+
+      - run: cargo fmt --all -- --check
+
+      - name: Fetch pinned sherpa-onnx archive
+        shell: bash
+        run: |
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            native_dir="$(cygpath -u '${{ runner.temp }}')/native-archives"
+          else
+            native_dir="${{ runner.temp }}/native-archives"
+          fi
+          mkdir -p "$native_dir"
+          archive="$native_dir/${{ matrix.archive }}"
+          curl --fail --location --retry 3 --output "$archive" \
+            "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.4/${{ matrix.archive }}"
+          actual="$(shasum -a 256 "$archive" | awk '{print $1}')"
+          test "$actual" = "${{ matrix.sha256 }}" || {
+            echo "sherpa-onnx archive checksum mismatch" >&2
+            exit 1
+          }
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            native_dir="$(cygpath -w "$native_dir")"
+          fi
+          echo "SHERPA_ONNX_ARCHIVE_DIR=$native_dir" >> "$GITHUB_ENV"
+
+      - run: cargo clippy --locked --all-targets --all-features -- -D warnings
+      - run: cargo test --locked --all-targets
+      - run: cargo build --locked --release
+      - name: Smoke-test standalone diagnostics
+        shell: bash
+        run: |
+          suffix=""
+          if [[ "${{ runner.os }}" == "Windows" ]]; then suffix=".exe"; fi
+          "target/release/utterpipe-pocket-tts$suffix" info

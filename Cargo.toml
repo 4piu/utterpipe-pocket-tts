@@ -5,6 +5,8 @@ edition = "2024"
 rust-version = "1.88"
 license = "Apache-2.0"
 description = "Offline Pocket TTS provider for UtterPipe"
+repository = "https://github.com/4piu/utterpipe-pocket-tts"
+homepage = "https://github.com/4piu/utterpipe-pocket-tts"
 
 [dependencies]
 atomicwrites = "0.4"

@@ -120,6 +120,7 @@ The verified `v1.13.4` static native archive SHA-256 values are:
 | Target | SHA-256 |
 | --- | --- |
 | macOS arm64 | `57801db2bbb786a5d343f515a38ff210b401842338bdc804fa075312d1cd2404` |
+| macOS x86_64 | `2bda2c10b31a1cfc45d9f9e14bd4983743ec3779d309e42d99a6c8fa1689043f` |
 | Linux x86_64 | `98b0e31996426f6e78244dbce1955548f2c64e8f01c4be75b85af7cdaa2e8d5c` |
 | Windows x86_64 MT release | `d81bd1d25112540862d2387072e76b2b6843ef962918d6b5c7db5a19c6276b4c` |
 

@@ -6,6 +6,8 @@ pub const ARCHIVE_NAME: &str = "sherpa-onnx-pocket-tts-int8-2026-01-26.tar.bz2";
 pub const ARCHIVE_SHA256: &str = "2f3b88823cbbb9bf0b2477ec8ae7b3fec417b3a87b6bb5f256dba66f2ad967cb";
 pub const MACOS_ARM64_NATIVE_ARCHIVE_SHA256: &str =
     "57801db2bbb786a5d343f515a38ff210b401842338bdc804fa075312d1cd2404";
+pub const MACOS_X64_NATIVE_ARCHIVE_SHA256: &str =
+    "2bda2c10b31a1cfc45d9f9e14bd4983743ec3779d309e42d99a6c8fa1689043f";
 pub const LINUX_X64_NATIVE_ARCHIVE_SHA256: &str =
     "98b0e31996426f6e78244dbce1955548f2c64e8f01c4be75b85af7cdaa2e8d5c";
 pub const WINDOWS_X64_NATIVE_ARCHIVE_SHA256: &str =
@@ -104,6 +106,7 @@ mod tests {
     fn native_archive_checksum_is_consistent_in_release_docs() {
         for checksum in [
             MACOS_ARM64_NATIVE_ARCHIVE_SHA256,
+            MACOS_X64_NATIVE_ARCHIVE_SHA256,
             LINUX_X64_NATIVE_ARCHIVE_SHA256,
             WINDOWS_X64_NATIVE_ARCHIVE_SHA256,
         ] {

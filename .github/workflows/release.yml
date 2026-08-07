@@ -1,0 +1,208 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  native:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x64
+            runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive: sherpa-onnx-v1.13.4-linux-x64-static-lib.tar.bz2
+            sha256: 98b0e31996426f6e78244dbce1955548f2c64e8f01c4be75b85af7cdaa2e8d5c
+          - name: macOS arm64
+            runner: macos-15
+            target: aarch64-apple-darwin
+            archive: sherpa-onnx-v1.13.4-osx-arm64-static-lib.tar.bz2
+            sha256: 57801db2bbb786a5d343f515a38ff210b401842338bdc804fa075312d1cd2404
+          - name: macOS x64
+            runner: macos-15-intel
+            target: x86_64-apple-darwin
+            archive: sherpa-onnx-v1.13.4-osx-x64-static-lib.tar.bz2
+            sha256: 2bda2c10b31a1cfc45d9f9e14bd4983743ec3779d309e42d99a6c8fa1689043f
+          - name: Windows x64
+            runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: sherpa-onnx-v1.13.4-win-x64-static-MT-Release-lib.tar.bz2
+            sha256: d81bd1d25112540862d2387072e76b2b6843ef962918d6b5c7db5a19c6276b4c
+    env:
+      TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@1.88.0
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Verify tag matches package version
+        shell: bash
+        run: |
+          package_id="$(cargo pkgid --locked -p utterpipe-pocket-tts)"
+          package_version="${package_id##*#}"
+          package_version="${package_version##*@}"
+          expected_tag="v$package_version"
+          test "$GITHUB_REF_NAME" = "$expected_tag" || {
+            echo "release tag '$GITHUB_REF_NAME' must equal '$expected_tag'" >&2
+            exit 1
+          }
+          echo "ARCHIVE_NAME=utterpipe-pocket-tts-$expected_tag-$TARGET" >> "$GITHUB_ENV"
+
+      - name: Fetch and verify native engine and model archives
+        shell: bash
+        run: |
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            fixture_dir="$(cygpath -u '${{ runner.temp }}')/pocket-fixtures"
+          else
+            fixture_dir="${{ runner.temp }}/pocket-fixtures"
+          fi
+          native_dir="$fixture_dir/native"
+          mkdir -p "$native_dir"
+
+          native="$native_dir/${{ matrix.archive }}"
+          curl --fail --location --retry 3 --output "$native" \
+            "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.4/${{ matrix.archive }}"
+          actual="$(shasum -a 256 "$native" | awk '{print $1}')"
+          test "$actual" = "${{ matrix.sha256 }}" || {
+            echo "sherpa-onnx archive checksum mismatch" >&2
+            exit 1
+          }
+
+          model="$fixture_dir/sherpa-onnx-pocket-tts-int8-2026-01-26.tar.bz2"
+          curl --fail --location --retry 3 --output "$model" \
+            https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/sherpa-onnx-pocket-tts-int8-2026-01-26.tar.bz2
+          actual="$(shasum -a 256 "$model" | awk '{print $1}')"
+          test "$actual" = "2f3b88823cbbb9bf0b2477ec8ae7b3fec417b3a87b6bb5f256dba66f2ad967cb" || {
+            echo "Pocket model archive checksum mismatch" >&2
+            exit 1
+          }
+
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            native_dir="$(cygpath -w "$native_dir")"
+            model="$(cygpath -w "$model")"
+          fi
+          echo "SHERPA_ONNX_ARCHIVE_DIR=$native_dir" >> "$GITHUB_ENV"
+          echo "UTTERPIPE_POCKET_MODEL_ARCHIVE=$model" >> "$GITHUB_ENV"
+
+      - name: Test native inference and build release
+        run: |
+          cargo test --locked --release --all-targets --target ${{ matrix.target }}
+          cargo test --locked --release --target ${{ matrix.target }} --test real_model -- --ignored --nocapture
+          cargo build --locked --release --target ${{ matrix.target }}
+
+      - name: Package self-contained provider
+        shell: bash
+        run: |
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            temp_dir="$(cygpath -u '${{ runner.temp }}')"
+            workspace="$(cygpath -u '${{ github.workspace }}')"
+            suffix=".exe"
+            extension="zip"
+          else
+            temp_dir="${{ runner.temp }}"
+            workspace="${{ github.workspace }}"
+            suffix=""
+            extension="tar.gz"
+          fi
+          package_root="$temp_dir/$ARCHIVE_NAME"
+          dist="$workspace/dist"
+          mkdir -p "$package_root" "$dist"
+          cp "target/$TARGET/release/utterpipe-pocket-tts$suffix" "$package_root/"
+          cp README.md SPEC.md THIRD_PARTY_NOTICES.md LICENSE "$package_root/"
+
+          if [[ "$extension" == "zip" ]]; then
+            archive="$dist/$ARCHIVE_NAME.zip"
+            powershell.exe -NoProfile -Command \
+              "Compress-Archive -Path '$(cygpath -w "$package_root")' -DestinationPath '$(cygpath -w "$archive")' -CompressionLevel Optimal"
+            extract_root="$temp_dir/package-check"
+            powershell.exe -NoProfile -Command \
+              "Expand-Archive '$(cygpath -w "$archive")' -DestinationPath '$(cygpath -w "$extract_root")'"
+          else
+            archive="$dist/$ARCHIVE_NAME.tar.gz"
+            tar -C "$temp_dir" -czf "$archive" "$ARCHIVE_NAME"
+            extract_root="$temp_dir/package-check"
+            mkdir -p "$extract_root"
+            tar -C "$extract_root" -xzf "$archive"
+          fi
+          hash="$(shasum -a 256 "$archive" | awk '{print $1}')"
+          printf '%s *%s\n' "$hash" "$(basename "$archive")" > "$archive.sha256"
+
+          provider="$extract_root/$ARCHIVE_NAME/utterpipe-pocket-tts$suffix"
+          "$provider" info
+          data="$temp_dir/package-data"
+          cache="$temp_dir/package-cache"
+          "$provider" doctor \
+            --data-dir "$data" --cache-dir "$cache"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.ARCHIVE_NAME }}
+          path: dist/*
+          if-no-files-found: error
+
+  source:
+    name: Source and SBOM
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@1.88.0
+
+      - name: Package source and CycloneDX SBOM
+        shell: bash
+        run: |
+          archive_name="utterpipe-pocket-tts-$GITHUB_REF_NAME-source"
+          mkdir -p dist
+          tar --exclude-vcs --exclude=target --exclude=dist \
+            --transform "s,^,$archive_name/," \
+            -czf "dist/$archive_name.tar.gz" .
+          hash="$(sha256sum "dist/$archive_name.tar.gz" | awk '{print $1}')"
+          printf '%s *%s\n' "$hash" "$archive_name.tar.gz" > "dist/$archive_name.tar.gz.sha256"
+
+          cargo install cargo-cyclonedx --version 0.5.9 --locked
+          sbom="utterpipe-pocket-tts-$GITHUB_REF_NAME.sbom.cdx"
+          cargo cyclonedx --format json --all --target all \
+            --spec-version 1.5 --override-filename "$sbom"
+          mv "$sbom.json" dist/
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: source
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish release
+    needs: [native, source]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --generate-notes \
+            --title "UtterPipe Pocket TTS $GITHUB_REF_NAME"
