@@ -54,10 +54,10 @@ impl ProviderProcess {
             "protocol.hello",
             json!({
                 "protocol": "utterpipe.tts",
-                "versions": [2],
+                "versions": [1],
                 "expected_provider": "pocket-tts",
                 "session": session,
-                "host": {"name": "provider-test", "version": "0.2.0"},
+                "host": {"name": "provider-test", "version": "0.1.0"},
                 "utterance_schema_profiles": ["utterpipe.utterance-options/1"]
             }),
         );
@@ -146,7 +146,7 @@ fn direct_cli_flushes_output_when_stdout_is_piped() {
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("Pocket TTS provider"));
-    assert!(stdout.contains("protocol: utterpipe.tts v2"));
+    assert!(stdout.contains("protocol: utterpipe.tts v1"));
 }
 
 #[test]

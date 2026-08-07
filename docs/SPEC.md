@@ -3,11 +3,11 @@
 Status: implemented
 Provider slug: `pocket-tts`
 Executable: `utterpipe-pocket-tts`
-Provider version: `0.2.0`
-UtterPipe protocol majors: `2`
+Provider version: `0.1.0`
+UtterPipe protocol majors: `1`
 
 This document is normative for this provider. It supplements the host-neutral
-[UtterPipe Protocol v2](https://github.com/4piu/utterpipe/blob/main/docs/SPEC.md)
+[UtterPipe Protocol v1](https://github.com/4piu/utterpipe/blob/main/docs/SPEC.md)
 specification and does not change that contract.
 
 ## 1. Purpose
@@ -39,7 +39,7 @@ Non-goals:
 
 - bundling model weights or voice recordings in the provider executable;
 - silently downloading a model during initialization or first synthesis;
-- a provider-curated downloadable voice catalog in version 0.2;
+- a provider-curated downloadable voice catalog in version 0.1;
 - training, fine-tuning, recording, microphone capture, or voice cleanup;
 - SSML, expression tags, GPU inference, or remote inference;
 - accepting arbitrary ONNX graphs or model directories;
@@ -82,7 +82,7 @@ future model revision may remove or change this restriction only after its
 artifact provenance and terms are independently verified and assigned a new
 model ID.
 
-Version 0.2 does not download voices. An imported reference remains the user's
+Version 0.1 does not download voices. An imported reference remains the user's
 asset. Its operational metadata records consent confirmation and content hash,
 but the provider does not grant any rights to the recording or generated voice.
 
@@ -145,7 +145,7 @@ The callback is therefore genuine incremental generation and cooperative
 cancellation, not post-generation slicing. Performance figures are evidence,
 not guaranteed product limits.
 
-Rejected alternatives for version 0.2:
+Rejected alternatives for version 0.1:
 
 - the upstream Python package would prevent a self-contained provider binary;
 - invoking a Python subprocess would complicate installation, cancellation,
@@ -164,7 +164,7 @@ The hello response identifies:
   "slug": "pocket-tts",
   "name": "Pocket TTS provider",
   "vendor": "UtterPipe contributors",
-  "version": "0.2.0"
+  "version": "0.1.0"
 }
 ```
 
@@ -211,7 +211,7 @@ platforms is not promised.
 
 ## 8. Model catalog and integrity
 
-Version 0.2 knows exactly one model:
+Version 0.1 knows exactly one model:
 
 ```text
 id: pocket-tts-int8-2026-01-26
@@ -250,7 +250,7 @@ upgrade. A replacement requires a new model ID and manifest.
 
 ## 9. Voice import and catalog
 
-Version 0.2 has no downloadable or embedded voices. The generic `voices`
+Version 0.1 has no downloadable or embedded voices. The generic `voices`
 catalog returned by `catalog.items` lists provider-owned imported voices
 compatible with the model and returns `{"voice":"<id>"}` selection patches.
 
@@ -266,7 +266,7 @@ compatible with the model and returns `{"voice":"<id>"}` selection patches.
 
 The importer opens without following a final symlink where the platform allows,
 validates all WAV sizes before allocation, decodes it, removes no content, and
-writes a normalized provider-owned mono PCM16 WAV. Version 0.2 preserves the
+writes a normalized provider-owned mono PCM16 WAV. Version 0.1 preserves the
 input sample rate because sherpa-onnx accepts the reference rate explicitly.
 
 Metadata stores the voice ID, SHA-256 of decoded sample content and source file,
@@ -328,9 +328,8 @@ Two or more runtimes may hold shared leases and read the same asset. A runtime
 starting during activation sees either the complete old pointer or complete new
 pointer. Model and voice versions can coexist until unleased cleanup.
 
-Version 0.2 reads only operational schema 1. Migration is an explicit
-management operation in a future provider, not startup behavior. Unknown newer
-schemas fail with `engine_unavailable` and do not mutate.
+Version 0.1 accepts only operational schema 1. Unknown schema versions fail
+with `engine_unavailable` and do not mutate.
 
 ## 11. Preparation and removal
 

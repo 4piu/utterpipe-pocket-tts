@@ -247,11 +247,11 @@ fn protocol_incremental_smoke(temp: &TempDir) {
         "protocol.hello",
         json!({
             "protocol":"utterpipe.tts",
-            "versions":[2],
+            "versions":[1],
             "expected_provider":"pocket-tts",
             "session":"runtime",
             "utterance_schema_profiles":["utterpipe.utterance-options/1"],
-            "host":{"name":"real-model-test", "version":"0.2.0"}
+            "host":{"name":"real-model-test", "version":"0.1.0"}
         }),
     );
     let hello = provider.control();

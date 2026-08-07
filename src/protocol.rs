@@ -1142,7 +1142,7 @@ fn choose_delivery(deliveries: &[AudioDelivery]) -> Result<Delivery, WireError> 
 fn hello(value: &Value) -> Result<(Session, Value), WireError> {
     let params: HelloParams = decode(value)?;
     if params.protocol != "utterpipe.tts"
-        || !params.versions.contains(&2)
+        || !params.versions.contains(&1)
         || params
             .versions
             .iter()
@@ -1150,7 +1150,7 @@ fn hello(value: &Value) -> Result<(Session, Value), WireError> {
     {
         return Err(WireError::new(
             "unsupported_protocol",
-            "UtterPipe protocol major 2 was not offered",
+            "UtterPipe protocol major 1 was not offered",
         ));
     }
     if params.expected_provider != PROVIDER_SLUG {
@@ -1184,7 +1184,7 @@ fn hello(value: &Value) -> Result<(Session, Value), WireError> {
     Ok((
         session,
         json!({
-            "protocol": "utterpipe.tts", "version": 2, "framing":"UTP1",
+            "protocol": "utterpipe.tts", "version": 1, "framing":"UTP1",
             "provider": {"slug": PROVIDER_SLUG, "name": PROVIDER_NAME, "vendor": PROVIDER_VENDOR, "version": PROVIDER_VERSION},
             "capabilities": ["synthesis", "synthesis.cancel", "catalog", "prepare", "remove", "asset.import"],
             "audio_deliveries": [

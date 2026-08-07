@@ -116,7 +116,7 @@ async fn run() -> Result<(), String> {
             println!("slug: {PROVIDER_SLUG}");
             println!("vendor: {PROVIDER_VENDOR}");
             println!("version: {PROVIDER_VERSION}");
-            println!("protocol: utterpipe.tts v2");
+            println!("protocol: utterpipe.tts v1");
             println!("delivery: complete PCM16 WAV, incremental PCM16");
             println!("engine: sherpa-onnx 1.13.4 (static)");
             Ok(())

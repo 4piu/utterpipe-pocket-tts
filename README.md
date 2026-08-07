@@ -13,7 +13,7 @@ serve repeated sequential utterances without Python or a child service.
 
 ## Status
 
-Version 0.2 pins one converted int8 model,
+Version 0.1 pins one converted int8 model,
 `pocket-tts-int8-2026-01-26`, and statically links sherpa-onnx 1.13.4. macOS
 arm64, Linux x86_64, and Windows x86_64 are verified locally. Release CI must
 pass real native inference, cancellation, shared-lease, packaging, and
