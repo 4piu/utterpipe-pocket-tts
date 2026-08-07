@@ -132,7 +132,7 @@ jobs:
           dist="$workspace/dist"
           mkdir -p "$package_root" "$dist"
           cp "target/$TARGET/release/utterpipe-pocket-tts$suffix" "$package_root/"
-          cp README.md SPEC.md THIRD_PARTY_NOTICES.md LICENSE "$package_root/"
+          cp README.md SPEC.md THIRD_PARTY_NOTICES.md LICENSE install.sh install.ps1 "$package_root/"
 
           if [[ "$extension" == "zip" ]]; then
             archive="$dist/$ARCHIVE_NAME.zip"

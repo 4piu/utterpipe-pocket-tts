@@ -38,6 +38,19 @@ jobs:
             sha256: d81bd1d25112540862d2387072e76b2b6843ef962918d6b5c7db5a19c6276b4c
     steps:
       - uses: actions/checkout@v6
+      - name: Check Unix installer syntax
+        if: runner.os != 'Windows'
+        run: sh -n install.sh
+      - name: Check Windows installer syntax
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path install.ps1), [ref]$tokens, [ref]$errors
+          ) | Out-Null
+          if ($errors.Count -ne 0) { throw ($errors -join [Environment]::NewLine) }
       - uses: dtolnay/rust-toolchain@1.88.0
         with:
           components: clippy, rustfmt

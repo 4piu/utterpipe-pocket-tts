@@ -29,6 +29,22 @@ Download the executable for your platform and place it next to the host or on
 name; there is no registry or provider-specific configuration file. The host's
 single `config.toml` selects the provider, model, imported voice ID, and options.
 
+After the first tagged release, the repository scripts provide
+checksum-verifying per-user installation:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/4piu/utterpipe-pocket-tts/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/4piu/utterpipe-pocket-tts/main/install.sh | sh -s -- --uninstall
+```
+
+```powershell
+irm https://raw.githubusercontent.com/4piu/utterpipe-pocket-tts/main/install.ps1 | iex
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/4piu/utterpipe-pocket-tts/main/install.ps1))) -Uninstall
+```
+
+Model and imported voice assets are preserved by default. Add `--purge` or
+`-Purge` only to irreversibly delete them during uninstall.
+
 The model and imported voice are not bundled. Prepare the model once, then
 import a reference WAV for which you have the necessary rights and consent:
 
