@@ -27,9 +27,11 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     PROVIDER_NAME, PROVIDER_SLUG, PROVIDER_VENDOR, PROVIDER_VERSION,
     audio::pcm16_wav_bytes,
-    engine::{
-        EngineError, GenerationSummary, PocketEngine, ProviderOptions, SAMPLE_RATE, options_schema,
+    config::{
+        ProviderOptions, UtteranceOptions, management_options_schema, provider_options_schema,
+        utterance_options_schema,
     },
+    engine::{EngineError, GenerationOptions, GenerationSummary, PocketEngine, SAMPLE_RATE},
     model::{
         ARCHIVE_BYTES, ARCHIVE_SHA256, INSTALLED_BYTES, LICENSE_IDS, MODEL_ID, SOURCE_URL,
         licenses, model_descriptor,
@@ -46,6 +48,7 @@ const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
 const WAV_FORMAT: &str = "audio/wav;codec=pcm_s16le";
 const PCM_FORMAT: &str = "audio/pcm;codec=pcm_s16le";
 const CANCELLATION_GRACE: Duration = Duration::from_secs(2);
+const UTTERANCE_SCHEMA_PROFILE: &str = "utterpipe.utterance-options/1";
 static PLAN_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Error)]
@@ -87,6 +90,7 @@ struct Request {
 struct RuntimeState {
     engine: Arc<PocketEngine>,
     assets: RuntimeAssets,
+    provider_options: ProviderOptions,
     delivery: Delivery,
     max_text_code_points: usize,
     max_audio_bytes: usize,
@@ -95,7 +99,7 @@ struct RuntimeState {
 
 struct ManagementState {
     store: Store,
-    voice_id: String,
+    provider_options: ProviderOptions,
 }
 
 struct ActiveSynthesis {
@@ -167,38 +171,50 @@ impl WireError {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct HelloParams {
     protocol: String,
     versions: Vec<u64>,
     expected_provider: String,
     session: String,
     host: HostIdentity,
+    utterance_schema_profiles: Vec<String>,
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct HostIdentity {
     name: String,
     version: String,
 }
 
 #[derive(Deserialize)]
-struct InitializeParams {
+#[serde(deny_unknown_fields)]
+struct RuntimeInitializeParams {
     data_dir: String,
     cache_dir: String,
-    options: Value,
-    selection: Selection,
+    provider_options: Map<String, Value>,
     limits: Limits,
-    accepted_delivery_modes: Vec<String>,
-    accepted_audio_formats: Vec<String>,
+    accepted_audio_deliveries: Vec<AudioDelivery>,
 }
 
 #[derive(Deserialize)]
-struct Selection {
-    model_id: String,
-    voice_id: String,
+#[serde(deny_unknown_fields)]
+struct ManagementInitializeParams {
+    data_dir: String,
+    cache_dir: String,
+    provider_options: Map<String, Value>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(deny_unknown_fields)]
+struct AudioDelivery {
+    mode: String,
+    format: String,
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Limits {
     max_text_code_points: u64,
     max_audio_bytes: u64,
@@ -206,35 +222,39 @@ struct Limits {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SynthesisParams {
     text: String,
+    #[serde(default)]
+    utterance_options: Map<String, Value>,
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct CancelParams {
     request_id: String,
 }
 
 #[derive(Deserialize)]
-struct CatalogParams {
+#[serde(deny_unknown_fields)]
+struct CatalogItemsParams {
+    catalog_id: String,
     scope: String,
     refresh: bool,
+    limit: u16,
+    #[serde(default)]
+    cursor: Option<String>,
 }
 
 #[derive(Deserialize)]
-struct VoiceCatalogParams {
-    model_id: String,
-    scope: String,
-    refresh: bool,
-}
-
-#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct PreparePlanParams {
     refresh: bool,
     allow_network: bool,
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct PrepareApplyParams {
     plan_id: String,
     accepted_licenses: Vec<String>,
@@ -242,19 +262,23 @@ struct PrepareApplyParams {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RemovePlanParams {
     artifacts: Vec<String>,
     purge: bool,
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RemoveApplyParams {
     plan_id: String,
     operation_id: String,
 }
 
 #[derive(Deserialize)]
-struct VoiceImportParams {
+#[serde(deny_unknown_fields)]
+struct AssetImportParams {
+    kind: String,
     source_path: String,
     requested_id: String,
     consent_confirmed: bool,
@@ -495,16 +519,22 @@ pub async fn run_stdio() -> Result<(), ProtocolFailure> {
                     match initialize(chosen_session, &request.params).await {
                         Ok(Initialized::Runtime(state)) => {
                             let delivery = state.delivery;
+                            let schema = utterance_options_schema();
+                            let digest = utterance_schema_digest(&schema)
+                                .map_err(|_| ProtocolFailure::Worker)?;
                             runtime = Some(state);
                             initialized = true;
-                            write_result(&mut output, &request.id, initialize_result(delivery))
-                                .await?;
+                            write_result(
+                                &mut output,
+                                &request.id,
+                                initialize_runtime_result(delivery, schema, digest),
+                            )
+                            .await?;
                         }
-                        Ok(Initialized::Management(state, delivery)) => {
+                        Ok(Initialized::Management(state)) => {
                             management = Some(state);
                             initialized = true;
-                            write_result(&mut output, &request.id, initialize_result(delivery))
-                                .await?;
+                            write_result(&mut output, &request.id, json!({"ready":true})).await?;
                         }
                         Err(error) => write_error(&mut output, &request.id, &error).await?,
                     }
@@ -566,7 +596,33 @@ pub async fn run_stdio() -> Result<(), ProtocolFailure> {
                             .await?;
                             continue;
                         }
-                        synthesis = Some(start_synthesis(request.id, params.text, state));
+                        let utterance: UtteranceOptions =
+                            match serde_json::from_value(Value::Object(params.utterance_options)) {
+                                Ok(options) => options,
+                                Err(_) => {
+                                    write_error(
+                                        &mut output,
+                                        &request.id,
+                                        &WireError::new(
+                                            "invalid_utterance_options",
+                                            "utterance options are invalid",
+                                        ),
+                                    )
+                                    .await?;
+                                    continue;
+                                }
+                            };
+                        if let Err(error) = utterance.validate() {
+                            write_error(
+                                &mut output,
+                                &request.id,
+                                &WireError::new("invalid_utterance_options", error.to_string()),
+                            )
+                            .await?;
+                            continue;
+                        }
+                        synthesis =
+                            Some(start_synthesis(request.id, params.text, &utterance, state));
                     }
                     (Session::Runtime, "synthesis.cancel") => {
                         match decode_cancel(&request.params) {
@@ -592,13 +648,7 @@ pub async fn run_stdio() -> Result<(), ProtocolFailure> {
                                     .await?;
                                 }
                             }
-                            "catalog.models" => match catalog_models(&request.params, state) {
-                                Ok(result) => {
-                                    write_result(&mut output, &request.id, result).await?
-                                }
-                                Err(error) => write_error(&mut output, &request.id, &error).await?,
-                            },
-                            "catalog.voices" => match catalog_voices(&request.params, state) {
+                            "catalog.items" => match catalog_items(&request.params, state) {
                                 Ok(result) => {
                                     write_result(&mut output, &request.id, result).await?
                                 }
@@ -644,7 +694,7 @@ pub async fn run_stdio() -> Result<(), ProtocolFailure> {
                                 }
                                 Err(error) => write_error(&mut output, &request.id, &error).await?,
                             },
-                            "voice.import" => match start_voice_import(&request.params, state) {
+                            "asset.import" => match start_asset_import(&request.params, state) {
                                 Ok(active) => {
                                     mutation = Some(ActiveManagement {
                                         id: request.id,
@@ -742,13 +792,19 @@ fn normalize_synthesis_completion(
     completion.unwrap_or(Err(EngineError::Failed))
 }
 
-fn start_synthesis(id: String, text: String, state: &RuntimeState) -> ActiveSynthesis {
+fn start_synthesis(
+    id: String,
+    text: String,
+    utterance: &UtteranceOptions,
+    state: &RuntimeState,
+) -> ActiveSynthesis {
     let (sender, chunks) = tokio::sync::mpsc::channel(4);
     let cancellation = Arc::new(AtomicBool::new(false));
     let worker_cancel = Arc::clone(&cancellation);
     let engine = Arc::clone(&state.engine);
     let reference = state.assets.reference.clone();
     let timeout = state.timeout;
+    let (speed, seed) = state.provider_options.effective_controls(utterance);
     let max_audio_bytes = match state.delivery {
         Delivery::Complete => state.max_audio_bytes.saturating_sub(44),
         Delivery::Incremental => state.max_audio_bytes,
@@ -757,9 +813,13 @@ fn start_synthesis(id: String, text: String, state: &RuntimeState) -> ActiveSynt
         engine.generate(
             &text,
             &reference,
+            GenerationOptions {
+                speed,
+                seed,
+                timeout,
+                max_audio_bytes,
+            },
             worker_cancel,
-            timeout,
-            max_audio_bytes,
             sender,
         )
     });
@@ -938,25 +998,32 @@ async fn cancel_workers(
 
 enum Initialized {
     Runtime(RuntimeState),
-    Management(ManagementState, Delivery),
+    Management(ManagementState),
 }
 
 async fn initialize(session: Session, value: &Value) -> Result<Initialized, WireError> {
-    let params: InitializeParams = decode(value)?;
+    if session == Session::Management {
+        let params: ManagementInitializeParams = decode(value)?;
+        let store = Store::new(
+            PathBuf::from(params.data_dir),
+            PathBuf::from(params.cache_dir),
+        )
+        .map_err(store_error)?;
+        let options = decode_provider_options(params.provider_options, false)?;
+        store.validate_local().map_err(store_error)?;
+        return Ok(Initialized::Management(ManagementState {
+            store,
+            provider_options: options,
+        }));
+    }
+
+    let params: RuntimeInitializeParams = decode(value)?;
     let store = Store::new(
         PathBuf::from(params.data_dir),
         PathBuf::from(params.cache_dir),
     )
     .map_err(store_error)?;
-    let options: ProviderOptions = serde_json::from_value(params.options)
-        .map_err(|_| WireError::new("invalid_options", "provider options are invalid"))?;
-    options.validate().map_err(engine_error)?;
-    if params.selection.model_id != MODEL_ID || !valid_voice_id(&params.selection.voice_id) {
-        return Err(WireError::new(
-            "invalid_selection",
-            "model or voice selection is invalid",
-        ));
-    }
+    let options = decode_provider_options(params.provider_options, true)?;
     if params.limits.max_text_code_points == 0
         || params.limits.max_audio_bytes == 0
         || params.limits.synthesis_timeout_ms == 0
@@ -965,89 +1032,109 @@ async fn initialize(session: Session, value: &Value) -> Result<Initialized, Wire
         || params.limits.synthesis_timeout_ms > MAX_SAFE_INTEGER
     {
         return Err(WireError::new(
-            "invalid_options",
+            "invalid_message",
             "negotiated limits are invalid",
         ));
     }
-    let delivery = choose_delivery(
-        &params.accepted_delivery_modes,
-        &params.accepted_audio_formats,
-    )?;
+    let delivery = choose_delivery(&params.accepted_audio_deliveries)?;
     let max_text_code_points = usize::try_from(
         params
             .limits
             .max_text_code_points
             .min(MAX_TEXT_CODE_POINTS as u64),
     )
-    .map_err(|_| WireError::new("invalid_options", "text limit is unsupported"))?;
+    .map_err(|_| WireError::new("invalid_message", "text limit is unsupported"))?;
     let max_audio_bytes =
         usize::try_from(params.limits.max_audio_bytes.min(MAX_AUDIO_BYTES as u64))
-            .map_err(|_| WireError::new("invalid_options", "audio limit is unsupported"))?;
+            .map_err(|_| WireError::new("invalid_message", "audio limit is unsupported"))?;
     let timeout = Duration::from_millis(params.limits.synthesis_timeout_ms);
     if std::time::Instant::now().checked_add(timeout).is_none() {
         return Err(WireError::new(
-            "invalid_options",
+            "invalid_message",
             "synthesis timeout is too large",
         ));
     }
-    if session == Session::Runtime {
-        let voice_id = params.selection.voice_id;
-        let model_id = params.selection.model_id;
-        let store_copy = store.clone();
-        let assets =
-            tokio::task::spawn_blocking(move || store_copy.acquire_runtime(&model_id, &voice_id))
-                .await
-                .map_err(|_| WireError::new("internal", "runtime initialization failed"))?
-                .map_err(store_error)?;
-        let model_path = assets.model_dir.clone();
-        let engine_options = options.clone();
-        let engine =
-            tokio::task::spawn_blocking(move || PocketEngine::create(&model_path, engine_options))
-                .await
-                .map_err(|_| WireError::new("internal", "engine initialization failed"))?
-                .map_err(engine_error)?;
-        Ok(Initialized::Runtime(RuntimeState {
-            engine: Arc::new(engine),
-            assets,
-            delivery,
-            max_text_code_points,
-            max_audio_bytes,
-            timeout,
-        }))
+    let voice_id = options
+        .voice
+        .clone()
+        .ok_or_else(|| WireError::new("invalid_provider_options", "runtime voice is missing"))?;
+    let model_id = options
+        .model
+        .clone()
+        .ok_or_else(|| WireError::new("invalid_provider_options", "runtime model is missing"))?;
+    let store_copy = store.clone();
+    let assets =
+        tokio::task::spawn_blocking(move || store_copy.acquire_runtime(&model_id, &voice_id))
+            .await
+            .map_err(|_| WireError::new("internal", "runtime initialization failed"))?
+            .map_err(store_error)?;
+    let model_path = assets.model_dir.clone();
+    let engine_options = options.engine_options();
+    let engine =
+        tokio::task::spawn_blocking(move || PocketEngine::create(&model_path, engine_options))
+            .await
+            .map_err(|_| WireError::new("internal", "engine initialization failed"))?
+            .map_err(engine_error)?;
+    Ok(Initialized::Runtime(RuntimeState {
+        engine: Arc::new(engine),
+        assets,
+        provider_options: options,
+        delivery,
+        max_text_code_points,
+        max_audio_bytes,
+        timeout,
+    }))
+}
+
+fn decode_provider_options(
+    options: Map<String, Value>,
+    runtime: bool,
+) -> Result<ProviderOptions, WireError> {
+    let options: ProviderOptions = serde_json::from_value(Value::Object(options))
+        .map_err(|_| WireError::new("invalid_provider_options", "provider options are invalid"))?;
+    let validation = if runtime {
+        options.validate_runtime()
     } else {
-        store.validate_local().map_err(store_error)?;
-        Ok(Initialized::Management(
-            ManagementState {
-                store,
-                voice_id: params.selection.voice_id,
-            },
-            delivery,
-        ))
-    }
+        options.validate_partial()
+    };
+    validation.map_err(|error| WireError::new("invalid_provider_options", error.to_string()))?;
+    Ok(options)
 }
 
-fn initialize_result(delivery: Delivery) -> Value {
-    match delivery {
-        Delivery::Complete => {
-            json!({"ready": true, "delivery_mode": "complete", "audio_format": WAV_FORMAT, "options_schema_version": 1})
-        }
-        Delivery::Incremental => {
-            json!({"ready": true, "delivery_mode": "incremental", "audio_format": PCM_FORMAT, "options_schema_version": 1})
-        }
-    }
+fn initialize_runtime_result(delivery: Delivery, schema: Value, digest: String) -> Value {
+    let pair = match delivery {
+        Delivery::Complete => json!({"mode":"complete", "format":WAV_FORMAT}),
+        Delivery::Incremental => json!({"mode":"incremental", "format":PCM_FORMAT}),
+    };
+    json!({
+        "ready":true,
+        "audio_delivery":pair,
+        "utterance_options_schema":schema,
+        "utterance_options_schema_digest":digest
+    })
 }
 
-fn choose_delivery(modes: &[String], formats: &[String]) -> Result<Delivery, WireError> {
-    for mode in modes {
-        if mode == "incremental" && formats.iter().any(|format| format == PCM_FORMAT) {
-            return Ok(Delivery::Incremental);
-        }
-        if mode == "complete" && formats.iter().any(|format| format == WAV_FORMAT) {
-            return Ok(Delivery::Complete);
+fn choose_delivery(deliveries: &[AudioDelivery]) -> Result<Delivery, WireError> {
+    if deliveries.is_empty()
+        || deliveries
+            .iter()
+            .enumerate()
+            .any(|(index, item)| deliveries[..index].contains(item))
+    {
+        return Err(WireError::new(
+            "invalid_message",
+            "accepted audio deliveries must be nonempty and unique",
+        ));
+    }
+    for delivery in deliveries {
+        match (delivery.mode.as_str(), delivery.format.as_str()) {
+            ("incremental", PCM_FORMAT) => return Ok(Delivery::Incremental),
+            ("complete", WAV_FORMAT) => return Ok(Delivery::Complete),
+            _ => {}
         }
     }
     Err(WireError::new(
-        "invalid_options",
+        "invalid_message",
         "no mutually supported audio delivery mode",
     ))
 }
@@ -1055,7 +1142,7 @@ fn choose_delivery(modes: &[String], formats: &[String]) -> Result<Delivery, Wir
 fn hello(value: &Value) -> Result<(Session, Value), WireError> {
     let params: HelloParams = decode(value)?;
     if params.protocol != "utterpipe.tts"
-        || !params.versions.contains(&1)
+        || !params.versions.contains(&2)
         || params
             .versions
             .iter()
@@ -1063,13 +1150,26 @@ fn hello(value: &Value) -> Result<(Session, Value), WireError> {
     {
         return Err(WireError::new(
             "unsupported_protocol",
-            "UtterPipe protocol major 1 was not offered",
+            "UtterPipe protocol major 2 was not offered",
         ));
     }
-    if params.expected_provider.is_empty()
-        || params.host.name.is_empty()
-        || params.host.version.is_empty()
+    if params.expected_provider != PROVIDER_SLUG {
+        return Err(WireError::new(
+            "provider_mismatch",
+            "expected provider does not match this provider",
+        ));
+    }
+    if !params
+        .utterance_schema_profiles
+        .iter()
+        .any(|profile| profile == UTTERANCE_SCHEMA_PROFILE)
     {
+        return Err(WireError::new(
+            "unsupported_schema_profile",
+            "utterpipe.utterance-options/1 was not offered",
+        ));
+    }
+    if params.host.name.is_empty() || params.host.version.is_empty() {
         return Err(WireError::new(
             "invalid_message",
             "hello identity fields are empty",
@@ -1084,27 +1184,46 @@ fn hello(value: &Value) -> Result<(Session, Value), WireError> {
     Ok((
         session,
         json!({
-            "protocol": "utterpipe.tts", "version": 1,
+            "protocol": "utterpipe.tts", "version": 2, "framing":"UTP1",
             "provider": {"slug": PROVIDER_SLUG, "name": PROVIDER_NAME, "vendor": PROVIDER_VENDOR, "version": PROVIDER_VERSION},
-            "capabilities": {"synthesis": true, "cancellation": true, "model_catalog": true, "voice_catalog": true, "prepare": true, "remove": true, "voice_import": true},
-            "delivery_modes": ["complete", "incremental"],
-            "audio_formats": [WAV_FORMAT, PCM_FORMAT],
-            "options_schema": options_schema()
+            "capabilities": ["synthesis", "synthesis.cancel", "catalog", "prepare", "remove", "asset.import"],
+            "audio_deliveries": [
+                {"mode":"complete", "format":WAV_FORMAT},
+                {"mode":"incremental", "format":PCM_FORMAT}
+            ],
+            "utterance_schema_profile":UTTERANCE_SCHEMA_PROFILE,
+            "provider_options_schema":provider_options_schema(),
+            "management_options_schema":management_options_schema(),
+            "catalogs":[
+                {"id":"models", "name":"Models", "description":"Pocket TTS model artifacts usable by this provider.", "item_kind":"model", "patchable_options":["model"]},
+                {"id":"voices", "name":"Voices", "description":"Imported consented reference voices usable by Pocket TTS.", "item_kind":"voice", "patchable_options":["voice"]}
+            ],
+            "import_kinds":[
+                {"id":"voice", "name":"Voice reference", "media_types":["audio/wav"], "max_source_bytes":5_242_880, "patchable_options":["voice"]}
+            ]
         }),
     ))
 }
 
 fn validation_result(state: &ManagementState) -> Value {
     let mut issues = Vec::new();
-    if state.store.model_status() != "installed" {
-        issues.push(json!({"severity":"error","code":"model_missing","message":"selected model is not installed","remediation":"run the host preparation command"}));
+    let model = state.provider_options.model.as_deref();
+    let voice = state.provider_options.voice.as_deref();
+    if model.is_none() {
+        issues.push(json!({"severity":"error","code":"model_option_missing","message":"no Pocket TTS model is selected","remediation":"select a model from the models catalog"}));
+    } else if state.store.model_status() != "installed" {
+        issues.push(json!({"severity":"error","code":"model_missing","message":"the selected model is not installed","remediation":"run the host preparation command"}));
     }
-    let voice_present = state
-        .store
-        .voice_catalog()
-        .is_ok_and(|voices| voices.iter().any(|voice| voice["id"] == state.voice_id));
-    if !voice_present {
-        issues.push(json!({"severity":"error","code":"voice_missing","message":"selected voice is not installed","remediation":"import a consented reference voice"}));
+    if let Some(voice) = voice {
+        let voice_present = state
+            .store
+            .voice_catalog()
+            .is_ok_and(|voices| voices.iter().any(|item| item["id"] == voice));
+        if !voice_present {
+            issues.push(json!({"severity":"error","code":"voice_missing","message":"the selected voice is not installed","remediation":"import a consented reference voice"}));
+        }
+    } else {
+        issues.push(json!({"severity":"error","code":"voice_option_missing","message":"no Pocket TTS voice is selected","remediation":"select or import a consented reference voice"}));
     }
     let status = if issues.is_empty() {
         "ready"
@@ -1114,41 +1233,89 @@ fn validation_result(state: &ManagementState) -> Value {
     json!({"status": status, "issues": issues})
 }
 
-fn catalog_models(value: &Value, state: &ManagementState) -> Result<Value, WireError> {
-    let params: CatalogParams = decode(value)?;
-    validate_scope(&params.scope)?;
-    let _ = params.refresh;
-    let status = state.store.model_status();
-    let included = match params.scope.as_str() {
-        "all" => true,
-        "available" => status == "available",
-        "installed" => status != "available",
-        _ => false,
-    };
-    let models = if included {
-        vec![model_descriptor(status)]
-    } else {
-        Vec::new()
-    };
-    Ok(json!({"models": models}))
-}
-
-fn catalog_voices(value: &Value, state: &ManagementState) -> Result<Value, WireError> {
-    let params: VoiceCatalogParams = decode(value)?;
-    validate_scope(&params.scope)?;
-    if params.model_id != MODEL_ID {
+fn catalog_items(value: &Value, state: &ManagementState) -> Result<Value, WireError> {
+    if value.get("cursor").is_some_and(Value::is_null) {
         return Err(WireError::new(
-            "invalid_selection",
-            "voice catalog model is unknown",
+            "invalid_message",
+            "catalog cursor is invalid",
+        ));
+    }
+    let params: CatalogItemsParams = decode(value)?;
+    validate_scope(&params.scope)?;
+    if !(1..=256).contains(&params.limit) {
+        return Err(WireError::new(
+            "invalid_message",
+            "catalog limit must be from 1 through 256",
         ));
     }
     let _ = params.refresh;
-    let voices = if params.scope == "available" {
-        Vec::new()
-    } else {
-        state.store.voice_catalog().map_err(store_error)?
+    let items = match params.catalog_id.as_str() {
+        "models" => model_catalog_items(&params.scope, state),
+        "voices" => voice_catalog_items(&params.scope, state)?,
+        _ => return Err(WireError::new("invalid_message", "catalog ID is unknown")),
     };
-    Ok(json!({"voices": voices}))
+    let offset = parse_catalog_cursor(params.cursor.as_deref(), items.len())?;
+    let end = (offset + usize::from(params.limit)).min(items.len());
+    let page = items[offset..end].to_vec();
+    let mut result = json!({"items":page});
+    if end < items.len() {
+        result["next_cursor"] = Value::String(format!("offset:{end}"));
+    }
+    Ok(result)
+}
+
+fn model_catalog_items(scope: &str, state: &ManagementState) -> Vec<Value> {
+    let status = state.store.model_status();
+    if (scope == "installed" && status != "installed")
+        || (scope == "available" && status != "available")
+    {
+        return Vec::new();
+    }
+    let mut item = model_descriptor(status);
+    if let Some(object) = item.as_object_mut() {
+        object.remove("version");
+    }
+    item["description"] = Value::String("Pinned English Pocket TTS int8 model.".into());
+    item["provider_options_patch"] = json!({"model":MODEL_ID});
+    item["artifacts"] = json!([format!("model:{MODEL_ID}")]);
+    vec![item]
+}
+
+fn voice_catalog_items(scope: &str, state: &ManagementState) -> Result<Vec<Value>, WireError> {
+    if scope == "available" {
+        return Ok(Vec::new());
+    }
+    state
+        .store
+        .voice_catalog()
+        .map_err(store_error)
+        .map(|mut voices| {
+            for voice in &mut voices {
+                if let Some(object) = voice.as_object_mut() {
+                    object.remove("kind");
+                }
+                let id = voice["id"].clone();
+                voice["description"] =
+                    Value::String("User-imported Pocket TTS reference voice.".into());
+                voice["provider_options_patch"] = json!({"voice":id});
+                voice["artifacts"] = json!([format!(
+                    "voice:{}",
+                    voice["id"].as_str().unwrap_or_default()
+                )]);
+            }
+            voices
+        })
+}
+
+fn parse_catalog_cursor(cursor: Option<&str>, length: usize) -> Result<usize, WireError> {
+    let Some(cursor) = cursor else {
+        return Ok(0);
+    };
+    cursor
+        .strip_prefix("offset:")
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|offset| *offset <= length)
+        .ok_or_else(|| WireError::new("invalid_message", "catalog cursor is invalid"))
 }
 
 fn validate_scope(scope: &str) -> Result<(), WireError> {
@@ -1388,7 +1555,7 @@ fn make_remove_plan(
     let params: RemovePlanParams = decode(value)?;
     if params.purge || params.artifacts.is_empty() {
         return Err(WireError::new(
-            "invalid_options",
+            "invalid_message",
             "purge is not supported and artifacts must be nonempty",
         ));
     }
@@ -1470,13 +1637,19 @@ fn start_remove_apply(
     })
 }
 
-fn start_voice_import(
+fn start_asset_import(
     value: &Value,
     state: &ManagementState,
 ) -> Result<ActiveManagement, WireError> {
-    let params: VoiceImportParams = decode(value)?;
+    let params: AssetImportParams = decode(value)?;
     if params.operation_id.is_empty() {
         return Err(WireError::new("invalid_message", "operation ID is empty"));
+    }
+    if params.kind != "voice" {
+        return Err(WireError::new(
+            "invalid_message",
+            "asset import kind is unknown",
+        ));
     }
     if !params.consent_confirmed {
         return Err(WireError::new(
@@ -1487,7 +1660,7 @@ fn start_voice_import(
     let source = PathBuf::from(params.source_path);
     if !source.is_absolute() || !valid_voice_id(&params.requested_id) {
         return Err(WireError::new(
-            "invalid_selection",
+            "invalid_message",
             "voice source or ID is invalid",
         ));
     }
@@ -1495,6 +1668,14 @@ fn start_voice_import(
     let result_id = id.clone();
     let store = state.store.clone();
     let mutation = store.begin_mutation().map_err(store_error)?;
+    let source_bytes = std::fs::symlink_metadata(&source)
+        .map_err(|_| WireError::new("resource_missing", "voice source is unavailable"))?;
+    if !source_bytes.file_type().is_file() || source_bytes.len() > 5_242_880 {
+        return Err(WireError::new(
+            "invalid_message",
+            "voice source must be a regular file no larger than 5 MiB",
+        ));
+    }
     let cancellation = CancellationToken::new();
     let task_cancel = cancellation.clone();
     let task = tokio::task::spawn_blocking(move || {
@@ -1503,7 +1684,11 @@ fn start_voice_import(
                 task_cancel.is_cancelled()
             })
             .map_err(store_error)?;
-        Ok(json!({"voice_id":result_id,"status":"installed"}))
+        Ok(json!({
+            "artifact_id":format!("voice:{result_id}"),
+            "status":"installed",
+            "provider_options_patch":{"voice":result_id}
+        }))
     });
     Ok(ActiveManagement {
         id: String::new(),
@@ -1514,7 +1699,9 @@ fn start_voice_import(
 
 fn engine_error(error: EngineError) -> WireError {
     match error {
-        EngineError::InvalidOptions => WireError::new("invalid_options", error.to_string()),
+        EngineError::InvalidOptions => {
+            WireError::new("invalid_provider_options", error.to_string())
+        }
         EngineError::Unavailable => WireError::new("engine_unavailable", error.to_string()),
         EngineError::Cancelled => WireError::new("cancelled", error.to_string()),
         EngineError::Timeout => WireError::new("timeout", error.to_string()),
@@ -1525,14 +1712,13 @@ fn engine_error(error: EngineError) -> WireError {
 
 fn store_error(error: StoreError) -> WireError {
     let code = match error {
-        StoreError::InvalidPaths => "invalid_options",
-        StoreError::ModelMissing => "model_missing",
-        StoreError::VoiceMissing => "voice_missing",
+        StoreError::InvalidPaths => "invalid_message",
+        StoreError::ModelMissing | StoreError::VoiceMissing => "resource_missing",
         StoreError::Integrity | StoreError::UnsafeArchive => "integrity_error",
         StoreError::ResourceBusy => "resource_busy",
-        StoreError::InvalidVoiceId | StoreError::VoiceConflict => "invalid_selection",
+        StoreError::InvalidVoiceId | StoreError::VoiceConflict => "invalid_provider_options",
         StoreError::ConsentRequired | StoreError::LicenseRequired => "license_required",
-        StoreError::InvalidAudio => "invalid_selection",
+        StoreError::InvalidAudio => "invalid_message",
         StoreError::Cancelled => "cancelled",
         StoreError::Schema | StoreError::Io => "engine_unavailable",
     };
@@ -1600,14 +1786,19 @@ fn is_management_method(method: &str) -> bool {
     matches!(
         method,
         "provider.validate"
-            | "catalog.models"
-            | "catalog.voices"
+            | "catalog.items"
             | "prepare.plan"
             | "prepare.apply"
             | "remove.plan"
             | "remove.apply"
-            | "voice.import"
+            | "asset.import"
     )
+}
+
+fn utterance_schema_digest(schema: &Value) -> Result<String, serde_json::Error> {
+    let canonical = serde_json_canonicalizer::to_vec(schema)?;
+    let digest = Sha256::digest(canonical);
+    Ok(format!("sha256:{digest:x}"))
 }
 
 async fn read_input<R: AsyncRead + Unpin>(
@@ -1866,10 +2057,16 @@ mod tests {
     #[test]
     fn delivery_follows_host_order() {
         assert_eq!(
-            choose_delivery(
-                &["complete".into(), "incremental".into()],
-                &[WAV_FORMAT.into(), PCM_FORMAT.into()]
-            )
+            choose_delivery(&[
+                AudioDelivery {
+                    mode: "complete".into(),
+                    format: WAV_FORMAT.into()
+                },
+                AudioDelivery {
+                    mode: "incremental".into(),
+                    format: PCM_FORMAT.into()
+                }
+            ])
             .unwrap(),
             Delivery::Complete
         );

@@ -54,10 +54,11 @@ impl ProviderProcess {
             "protocol.hello",
             json!({
                 "protocol": "utterpipe.tts",
-                "versions": [1],
+                "versions": [2],
                 "expected_provider": "pocket-tts",
                 "session": session,
-                "host": {"name": "provider-test", "version": "0.1.0"}
+                "host": {"name": "provider-test", "version": "0.2.0"},
+                "utterance_schema_profiles": ["utterpipe.utterance-options/1"]
             }),
         );
         let response = self.response();
@@ -81,17 +82,7 @@ fn initialize_params(temp: &TempDir) -> Value {
     json!({
         "data_dir": temp.path().join("data").to_string_lossy(),
         "cache_dir": temp.path().join("cache").to_string_lossy(),
-        "options": {},
-        "selection": {"model_id": MODEL_ID, "voice_id": "test-voice"},
-        "limits": {
-            "max_text_code_points": 4096,
-            "max_audio_bytes": 16_777_216,
-            "synthesis_timeout_ms": 30_000
-        },
-        "accepted_delivery_modes": ["incremental", "complete"],
-        "accepted_audio_formats": [
-            "audio/pcm;codec=pcm_s16le", "audio/wav;codec=pcm_s16le"
-        ]
+        "provider_options": {"model": MODEL_ID, "voice": "test-voice"}
     })
 }
 
@@ -155,7 +146,7 @@ fn direct_cli_flushes_output_when_stdout_is_piped() {
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("Pocket TTS provider"));
-    assert!(stdout.contains("protocol: utterpipe.tts v1"));
+    assert!(stdout.contains("protocol: utterpipe.tts v2"));
 }
 
 #[test]
@@ -168,7 +159,7 @@ fn inspect_rejects_known_cross_session_methods_and_unknown_methods_exactly() {
     assert_eq!(provider.response()["error"]["code"], "wrong_session");
     provider.request("health", "runtime.health", json!({}));
     assert_eq!(provider.response()["error"]["code"], "wrong_session");
-    provider.request("catalog", "catalog.voices", json!({}));
+    provider.request("catalog", "catalog.items", json!({}));
     assert_eq!(provider.response()["error"]["code"], "wrong_session");
     provider.request("unknown", "future.method", json!({}));
     assert_eq!(provider.response()["error"]["code"], "method_not_supported");
@@ -186,16 +177,26 @@ fn management_catalog_import_plan_and_remove_are_wire_compatible() {
 
     provider.request(
         "voices-empty",
-        "catalog.voices",
-        json!({"model_id": MODEL_ID, "scope": "installed", "refresh": false}),
+        "catalog.items",
+        json!({"catalog_id":"voices", "scope":"installed", "refresh":false, "limit":100}),
     );
-    assert_eq!(provider.response()["result"]["voices"], json!([]));
+    assert_eq!(provider.response()["result"]["items"], json!([]));
     provider.request(
         "models-installed",
-        "catalog.models",
-        json!({"scope": "installed", "refresh": false}),
+        "catalog.items",
+        json!({"catalog_id":"models", "scope":"installed", "refresh":false, "limit":100}),
     );
-    assert_eq!(provider.response()["result"]["models"], json!([]));
+    assert_eq!(provider.response()["result"]["items"], json!([]));
+    provider.request(
+        "models-all",
+        "catalog.items",
+        json!({"catalog_id":"models", "scope":"all", "refresh":false, "limit":100}),
+    );
+    let models = provider.response();
+    assert_eq!(
+        models["result"]["items"][0]["provider_options_patch"],
+        json!({"model":MODEL_ID})
+    );
 
     provider.request(
         "plan",
@@ -214,30 +215,41 @@ fn management_catalog_import_plan_and_remove_are_wire_compatible() {
 
     provider.request(
         "import",
-        "voice.import",
+        "asset.import",
         json!({
+            "kind":"voice",
             "source_path": source.to_string_lossy(), "requested_id": "test-voice",
             "consent_confirmed": true, "operation_id": "import-1"
         }),
     );
-    assert_eq!(provider.response()["result"]["status"], "installed");
+    let imported = provider.response();
+    assert_eq!(imported["result"]["status"], "installed");
+    assert_eq!(imported["result"]["artifact_id"], "voice:test-voice");
+    assert_eq!(
+        imported["result"]["provider_options_patch"],
+        json!({"voice":"test-voice"})
+    );
     provider.request(
         "voices",
-        "catalog.voices",
-        json!({"model_id": MODEL_ID, "scope": "installed", "refresh": false}),
+        "catalog.items",
+        json!({"catalog_id":"voices", "scope":"installed", "refresh":false, "limit":100}),
     );
     let voices = provider.response();
-    assert_eq!(voices["result"]["voices"][0]["id"], "test-voice");
+    assert_eq!(voices["result"]["items"][0]["id"], "test-voice");
     assert_eq!(
-        voices["result"]["voices"][0]["license"]["url"],
+        voices["result"]["items"][0]["license"]["url"],
         "https://github.com/4piu/utterpipe-pocket-tts#voice-provenance-and-consent"
+    );
+    assert_eq!(
+        voices["result"]["items"][0]["provider_options_patch"],
+        json!({"voice":"test-voice"})
     );
     provider.request(
         "voices-available",
-        "catalog.voices",
-        json!({"model_id": MODEL_ID, "scope": "available", "refresh": false}),
+        "catalog.items",
+        json!({"catalog_id":"voices", "scope":"available", "refresh":false, "limit":100}),
     );
-    assert_eq!(provider.response()["result"]["voices"], json!([]));
+    assert_eq!(provider.response()["result"]["items"], json!([]));
 
     provider.request(
         "remove-plan",
@@ -259,6 +271,35 @@ fn management_catalog_import_plan_and_remove_are_wire_compatible() {
 }
 
 #[test]
+fn management_accepts_empty_options_and_reports_actionable_incomplete_status() {
+    let temp = TempDir::new().unwrap();
+    let mut provider = ProviderProcess::spawn();
+    provider.hello("management");
+    provider.request(
+        "init",
+        "session.initialize",
+        json!({
+            "data_dir":temp.path().join("data").to_string_lossy(),
+            "cache_dir":temp.path().join("cache").to_string_lossy(),
+            "provider_options":{}
+        }),
+    );
+    assert_eq!(provider.response()["result"], json!({"ready":true}));
+    provider.request("validate", "provider.validate", json!({}));
+    let validation = provider.response();
+    assert_eq!(validation["result"]["status"], "incomplete");
+    let codes = validation["result"]["issues"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|issue| issue["code"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert!(codes.contains(&"model_option_missing"));
+    assert!(codes.contains(&"voice_option_missing"));
+    provider.shutdown();
+}
+
+#[test]
 fn competing_process_mutation_returns_resource_busy_before_source_decode() {
     let temp = TempDir::new().unwrap();
     let store = Store::new(temp.path().join("data"), temp.path().join("cache")).unwrap();
@@ -268,8 +309,9 @@ fn competing_process_mutation_returns_resource_busy_before_source_decode() {
     provider.initialize_management(&temp);
     provider.request(
         "import",
-        "voice.import",
+        "asset.import",
         json!({
+            "kind":"voice",
             "source_path": temp.path().join("missing.wav").to_string_lossy(),
             "requested_id": "test-voice", "consent_confirmed": true,
             "operation_id": "contended-import"
@@ -332,8 +374,9 @@ fn shutdown_cancels_an_active_import_and_exits_cleanly() {
     provider.initialize_management(&temp);
     provider.request(
         "import",
-        "voice.import",
+        "asset.import",
         json!({
+            "kind":"voice",
             "source_path": source.to_string_lossy(), "requested_id": "test-voice",
             "consent_confirmed": true, "operation_id": "import-cancel"
         }),
@@ -366,8 +409,9 @@ fn shutdown_terminal_matches_whether_import_cancel_or_commit_won() {
     provider.initialize_management(&temp);
     provider.request(
         "import",
-        "voice.import",
+        "asset.import",
         json!({
+            "kind":"voice",
             "source_path": source.to_string_lossy(), "requested_id": "race-voice",
             "consent_confirmed": true, "operation_id": "import-race"
         }),
@@ -401,8 +445,9 @@ fn eof_during_an_active_import_exits_without_publishing_partial_state() {
     provider.initialize_management(&temp);
     provider.request(
         "import",
-        "voice.import",
+        "asset.import",
         json!({
+            "kind":"voice",
             "source_path": source.to_string_lossy(), "requested_id": "test-voice",
             "consent_confirmed": true, "operation_id": "import-eof"
         }),

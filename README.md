@@ -13,7 +13,7 @@ serve repeated sequential utterances without Python or a child service.
 
 ## Status
 
-Version 0.1 pins one converted int8 model,
+Version 0.2 pins one converted int8 model,
 `pocket-tts-int8-2026-01-26`, and statically links sherpa-onnx 1.13.4. macOS
 arm64, Linux x86_64, and Windows x86_64 are verified locally. Release CI must
 pass real native inference, cancellation, shared-lease, packaging, and
@@ -73,11 +73,12 @@ schema_version = 1
 [tts]
 enabled = true
 backend = "utterpipe-pocket-tts"
-model_id = "pocket-tts-int8-2026-01-26"
-voice_id = "my-voice"
 maximum_characters = 500
+agent_utterance_options = ["speed", "seed"]
 
 [tts.provider_options]
+model = "pocket-tts-int8-2026-01-26"
+voice = "my-voice"
 num_threads = 2
 speed = 1.0
 seed = 42
@@ -92,7 +93,7 @@ agent-speak prepare --config ./agent-speak.toml \
   --accept-license pocket-tts-acceptable-use \
   --accept-license pocket-tts-converted-artifact-non-commercial --yes
 
-agent-speak provider voices import --config ./agent-speak.toml \
+agent-speak provider import --config ./agent-speak.toml --kind voice \
   --source /absolute/reference.wav --id my-voice --consent-confirmed
 ```
 
@@ -141,15 +142,22 @@ voice.
 
 ## Provider options
 
-All options are fixed at runtime initialization. Defaults are shown below.
+`model` and `voice` are required runtime selections. The engine controls have
+the defaults shown below.
 
 ```toml
+model = "pocket-tts-int8-2026-01-26"
+voice = "my-voice"
 num_threads = 2
 speed = 1.0
 seed = 42
 max_reference_audio_seconds = 10.0
 voice_embedding_cache_capacity = 16
 ```
+
+The host may pass `speed` and `seed` for one synthesis request when the user
+allows those agent-controlled options. Per-request values override the fixed
+defaults without changing the config file. Other controls remain startup-fixed.
 
 See [the provider specification](docs/SPEC.md) for ranges, exact wire contracts,
 model hashes, storage

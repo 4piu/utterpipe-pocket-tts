@@ -11,7 +11,7 @@ use std::{
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 use utterpipe_pocket_tts::{
-    engine::{EngineError, PocketEngine, ProviderOptions},
+    engine::{EngineError, EngineOptions, GenerationOptions, PocketEngine},
     model::{LICENSE_IDS, MODEL_ID},
     store::{Store, StoreError},
 };
@@ -87,9 +87,8 @@ async fn real_inference_streams_cancels_and_honors_shared_leases() {
     ));
     drop(second_assets);
 
-    let engine = Arc::new(
-        PocketEngine::create(&first_assets.model_dir, ProviderOptions::default()).unwrap(),
-    );
+    let engine =
+        Arc::new(PocketEngine::create(&first_assets.model_dir, EngineOptions::default()).unwrap());
     let prompt = first_assets.reference.clone();
     let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
     let generation_engine = Arc::clone(&engine);
@@ -97,9 +96,8 @@ async fn real_inference_streams_cancels_and_honors_shared_leases() {
         generation_engine.generate(
             "This genuine Pocket synthesis is deliberately long enough to exercise several consecutive callback frames before it reaches the terminal result.",
             &prompt,
+            GenerationOptions { speed:1.0, seed:42, timeout:Duration::from_secs(90), max_audio_bytes:32 * 1_024 * 1_024 },
             Arc::new(AtomicBool::new(false)),
-            Duration::from_secs(90),
-            32 * 1_024 * 1_024,
             sender,
         )
     });
@@ -130,9 +128,8 @@ async fn real_inference_streams_cancels_and_honors_shared_leases() {
         bounded_engine.generate(
             "This request must stop at the first native callback because one byte cannot hold even one PCM16 sample.",
             &prompt,
+            GenerationOptions { speed:1.0, seed:42, timeout:Duration::from_secs(90), max_audio_bytes:1 },
             Arc::new(AtomicBool::new(false)),
-            Duration::from_secs(90),
-            1,
             sender,
         )
     })
@@ -149,9 +146,8 @@ async fn real_inference_streams_cancels_and_honors_shared_leases() {
         cancellation_engine.generate(
             "Cancel this long Pocket synthesis after its first genuine callback frame, while the same warm engine instance remains loaded.",
             &prompt,
+            GenerationOptions { speed:1.0, seed:42, timeout:Duration::from_secs(90), max_audio_bytes:32 * 1_024 * 1_024 },
             worker_cancel,
-            Duration::from_secs(90),
-            32 * 1_024 * 1_024,
             sender,
         )
     });

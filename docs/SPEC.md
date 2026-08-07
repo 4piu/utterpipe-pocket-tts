@@ -1,13 +1,13 @@
 # Pocket TTS provider specification
 
-Status: locally implemented; public name and pre-release compatibility provisional
+Status: implemented
 Provider slug: `pocket-tts`
 Executable: `utterpipe-pocket-tts`
-Initial provider version: `0.1.0`
-UtterPipe protocol majors: `1`
+Provider version: `0.2.0`
+UtterPipe protocol majors: `2`
 
 This document is normative for this provider. It supplements the host-neutral
-[UtterPipe Protocol v1](https://github.com/4piu/utterpipe/blob/main/docs/SPEC.md)
+[UtterPipe Protocol v2](https://github.com/4piu/utterpipe/blob/main/docs/SPEC.md)
 specification and does not change that contract.
 
 ## 1. Purpose
@@ -39,10 +39,9 @@ Non-goals:
 
 - bundling model weights or voice recordings in the provider executable;
 - silently downloading a model during initialization or first synthesis;
-- a provider-curated downloadable voice catalog in version 0.1;
+- a provider-curated downloadable voice catalog in version 0.2;
 - training, fine-tuning, recording, microphone capture, or voice cleanup;
-- SSML, expression tags, per-request engine controls, GPU inference, or remote
-  inference;
+- SSML, expression tags, GPU inference, or remote inference;
 - accepting arbitrary ONNX graphs or model directories;
 - claiming that a user-supplied recording is lawful or consented beyond the
   explicit confirmation captured during import.
@@ -83,7 +82,7 @@ future model revision may remove or change this restriction only after its
 artifact provenance and terms are independently verified and assigned a new
 model ID.
 
-Version 0.1 does not download voices. An imported reference remains the user's
+Version 0.2 does not download voices. An imported reference remains the user's
 asset. Its operational metadata records consent confirmation and content hash,
 but the provider does not grant any rights to the recording or generated voice.
 
@@ -146,7 +145,7 @@ The callback is therefore genuine incremental generation and cooperative
 cancellation, not post-generation slicing. Performance figures are evidence,
 not guaranteed product limits.
 
-Rejected alternatives for version 0.1:
+Rejected alternatives for version 0.2:
 
 - the upstream Python package would prevent a self-contained provider binary;
 - invoking a Python subprocess would complicate installation, cancellation,
@@ -165,7 +164,7 @@ The hello response identifies:
   "slug": "pocket-tts",
   "name": "Pocket TTS provider",
   "vendor": "UtterPipe contributors",
-  "version": "0.1.0"
+  "version": "0.2.0"
 }
 ```
 
@@ -173,47 +172,46 @@ Capabilities and formats:
 
 ```json
 {
-  "capabilities": {
-    "synthesis": true,
-    "cancellation": true,
-    "model_catalog": true,
-    "voice_catalog": true,
-    "prepare": true,
-    "remove": true,
-    "voice_import": true
-  },
-  "delivery_modes": ["complete", "incremental"],
-  "audio_formats": [
-    "audio/wav;codec=pcm_s16le",
-    "audio/pcm;codec=pcm_s16le"
+  "capabilities": [
+    "synthesis", "synthesis.cancel", "catalog",
+    "prepare", "remove", "asset.import"
+  ],
+  "audio_deliveries": [
+    {"mode":"complete", "format":"audio/wav;codec=pcm_s16le"},
+    {"mode":"incremental", "format":"audio/pcm;codec=pcm_s16le"}
   ]
 }
 ```
 
 ## 7. Provider options
 
-All options are startup-fixed. Unknown options are rejected.
+Unknown options are rejected. Runtime initialization requires `model` and
+`voice`; management initialization accepts a partial object, including `{}`.
 
 | Option | Type | Default | Rules and meaning |
 | --- | --- | --- | --- |
+| `model` | string | required | must equal `pocket-tts-int8-2026-01-26` |
+| `voice` | string | required | installed voice ID matching the import rules |
 | `num_threads` | integer | `2` | `1..64`; sherpa-onnx CPU inference threads |
 | `speed` | number | `1.0` | finite `0.5..2.0`; Pocket generation speed multiplier |
 | `seed` | integer | `42` | `0..4294967295`; fixed synthesis seed |
 | `max_reference_audio_seconds` | number | `10.0` | finite `1.0..30.0`; maximum prompt audio used by the engine |
 | `voice_embedding_cache_capacity` | integer | `16` | `1..128`; in-memory embeddings per runtime process |
 
-The provider publishes JSON Schema Draft 2020-12 with
-`additionalProperties: false` and schema version 1. None is a secret. There is no configurable output
+The provider publishes complete and partial JSON Schema Draft 2020-12 schemas
+with `additionalProperties: false`. None is a secret. There is no configurable output
 sample rate: the provider reports the engine's actual 24,000 Hz output and the
 host adapts it to the playback device.
 
-`seed` makes repeated requests reproducible only to the extent supported by the
+`speed` and `seed` are fixed defaults which may be overridden for one request
+through the negotiated utterance-options schema. The remaining controls are
+startup-fixed. `seed` makes repeated requests reproducible only to the extent supported by the
 pinned engine, target, and thread configuration. Bit-identical output across
 platforms is not promised.
 
 ## 8. Model catalog and integrity
 
-Version 0.1 knows exactly one model:
+Version 0.2 knows exactly one model:
 
 ```text
 id: pocket-tts-int8-2026-01-26
@@ -252,10 +250,11 @@ upgrade. A replacement requires a new model ID and manifest.
 
 ## 9. Voice import and catalog
 
-Version 0.1 has no downloadable or embedded voices. `catalog.voices` lists
-provider-owned imported voices compatible with the model.
+Version 0.2 has no downloadable or embedded voices. The generic `voices`
+catalog returned by `catalog.items` lists provider-owned imported voices
+compatible with the model and returns `{"voice":"<id>"}` selection patches.
 
-`voice.import` requires:
+`asset.import` with kind `voice` requires:
 
 - an absolute `source_path`;
 - a `requested_id` matching `[a-z0-9][a-z0-9._-]{0,62}[a-z0-9]`, or one
@@ -267,7 +266,7 @@ provider-owned imported voices compatible with the model.
 
 The importer opens without following a final symlink where the platform allows,
 validates all WAV sizes before allocation, decodes it, removes no content, and
-writes a normalized provider-owned mono PCM16 WAV. Version 0.1 preserves the
+writes a normalized provider-owned mono PCM16 WAV. Version 0.2 preserves the
 input sample rate because sherpa-onnx accepts the reference rate explicitly.
 
 Metadata stores the voice ID, SHA-256 of decoded sample content and source file,
@@ -329,7 +328,7 @@ Two or more runtimes may hold shared leases and read the same asset. A runtime
 starting during activation sees either the complete old pointer or complete new
 pointer. Model and voice versions can coexist until unleased cleanup.
 
-Version 0.1 reads only operational schema 1. Migration is an explicit
+Version 0.2 reads only operational schema 1. Migration is an explicit
 management operation in a future provider, not startup behavior. Unknown newer
 schemas fail with `engine_unavailable` and do not mutate.
 
@@ -363,11 +362,12 @@ Inspect hello is side-effect-free. A management session validates options and
 may initialize with a missing selected model or voice for catalog, prepare, or
 import operations.
 
-A runtime session validates schema, model manifest, voice metadata and WAV,
+A runtime session reads the model and voice exclusively from `provider_options`,
+validates schema, model manifest, voice metadata and WAV,
 takes shared leases, constructs `OfflineTts` from the pinned active graph files,
 and loads the reference samples. It must not download, migrate, write a cache,
-or synthesize during initialization. Missing assets map to `model_missing` or
-`voice_missing`; corrupt assets map to `integrity_error`; engine construction
+or synthesize during initialization. Missing assets map to `resource_missing`;
+corrupt assets map to `integrity_error`; engine construction
 failure maps to `engine_unavailable`.
 
 One warm engine instance remains alive for repeated sequential synthesis until
@@ -381,7 +381,7 @@ The provider validates the negotiated text limit, rejects empty text and NUL,
 and otherwise passes the Unicode string unchanged to the engine. It does not
 interpret XML, SSML, markdown, or expression tags and does not log the text.
 
-Generation uses the initialized model, reference voice, `speed`, `seed`, and
+Generation uses the initialized model, reference voice, effective `speed`, `seed`, and
 `max_reference_audio_seconds`. Output is mono 24,000 Hz float PCM from the
 engine, converted sample-by-sample to little-endian PCM16. Values are clamped to
 `[-1.0, 1.0]`; non-finite samples fail synthesis; negative full scale maps to
@@ -467,11 +467,11 @@ removal primitives, including the same cross-process mutation and asset locks.
 
 | Condition | Protocol error |
 | --- | --- |
-| Unknown/range-invalid option | `invalid_options` |
-| Unknown model or voice ID syntax | `invalid_selection` |
-| Invalid reference-audio source or format | `invalid_selection` |
-| Selected model absent | `model_missing` |
-| Selected/imported voice absent | `voice_missing` |
+| Unknown/range-invalid fixed option | `invalid_provider_options` |
+| Unknown/range-invalid per-request option | `invalid_utterance_options` |
+| Unknown model or voice ID syntax | `invalid_provider_options` |
+| Invalid reference-audio request or format | `invalid_message` |
+| Selected model or voice absent | `resource_missing` |
 | Model/archive/file hash mismatch | `integrity_error` |
 | Required disclosure not accepted | `license_required` |
 | Mutation or leased removal conflict | `resource_busy` |

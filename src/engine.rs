@@ -9,7 +9,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::json;
 use sha2::{Digest, Sha256};
 use sherpa_onnx::{
     GenerationConfig, OfflineTts, OfflineTtsConfig, OfflineTtsModelConfig,
@@ -23,7 +23,7 @@ pub const SAMPLE_RATE: u32 = 24_000;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
-pub struct ProviderOptions {
+pub struct EngineOptions {
     pub num_threads: u32,
     pub speed: f64,
     pub seed: u32,
@@ -31,7 +31,7 @@ pub struct ProviderOptions {
     pub voice_embedding_cache_capacity: u32,
 }
 
-impl Default for ProviderOptions {
+impl Default for EngineOptions {
     fn default() -> Self {
         Self {
             num_threads: 2,
@@ -43,7 +43,7 @@ impl Default for ProviderOptions {
     }
 }
 
-impl ProviderOptions {
+impl EngineOptions {
     /// Validate every engine-specific startup option.
     ///
     /// # Errors
@@ -64,21 +64,6 @@ impl ProviderOptions {
 }
 
 #[must_use]
-pub fn options_schema() -> Value {
-    json!({
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-            "num_threads": {"type": "integer", "minimum": 1, "maximum": 64, "default": 2},
-            "speed": {"type": "number", "minimum": 0.5, "maximum": 2.0, "default": 1.0},
-            "seed": {"type": "integer", "minimum": 0, "maximum": 4294967295_u64, "default": 42},
-            "max_reference_audio_seconds": {"type": "number", "minimum": 1.0, "maximum": 30.0, "default": 10.0},
-            "voice_embedding_cache_capacity": {"type": "integer", "minimum": 1, "maximum": 128, "default": 16}
-        }
-    })
-}
-
 #[derive(Debug, Error, Clone, Copy, Eq, PartialEq)]
 pub enum EngineError {
     #[error("provider options are invalid")]
@@ -102,9 +87,17 @@ pub struct GenerationSummary {
     pub pcm_sha256: [u8; 32],
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct GenerationOptions {
+    pub speed: f64,
+    pub seed: u32,
+    pub timeout: Duration,
+    pub max_audio_bytes: usize,
+}
+
 pub struct PocketEngine {
     tts: OfflineTts,
-    options: ProviderOptions,
+    options: EngineOptions,
 }
 
 impl PocketEngine {
@@ -113,7 +106,7 @@ impl PocketEngine {
     /// # Errors
     ///
     /// Returns [`EngineError::Unavailable`] if the native engine rejects the model.
-    pub fn create(model: &Path, options: ProviderOptions) -> Result<Self, EngineError> {
+    pub fn create(model: &Path, options: EngineOptions) -> Result<Self, EngineError> {
         options.validate()?;
         let pocket = OfflineTtsPocketModelConfig {
             lm_flow: Some(model_file(model, "lm_flow.int8.onnx")?),
@@ -153,11 +146,13 @@ impl PocketEngine {
         &self,
         text: &str,
         reference: &ReferenceAudio,
+        options: GenerationOptions,
         cancellation: Arc<AtomicBool>,
-        timeout: Duration,
-        max_audio_bytes: usize,
         sender: tokio::sync::mpsc::Sender<Vec<u8>>,
     ) -> Result<GenerationSummary, EngineError> {
+        if !options.speed.is_finite() || !(0.5..=2.0).contains(&options.speed) {
+            return Err(EngineError::InvalidOptions);
+        }
         let sample_limit = (f64::from(reference.sample_rate)
             * self.options.max_reference_audio_seconds)
             .floor() as usize;
@@ -172,13 +167,13 @@ impl PocketEngine {
             "max_reference_audio_len".to_owned(),
             json!(self.options.max_reference_audio_seconds),
         );
-        extra.insert("seed".to_owned(), json!(self.options.seed));
+        extra.insert("seed".to_owned(), json!(options.seed));
         let config = GenerationConfig {
             // Silence post-scaling is a whole-output transform performed after
             // callbacks. Disabling it keeps callback concatenation identical to
             // the final native audio and makes incremental delivery truthful.
             silence_scale: 1.0,
-            speed: self.options.speed as f32,
+            speed: options.speed as f32,
             reference_audio: Some(reference_samples),
             reference_sample_rate: i32::try_from(reference.sample_rate)
                 .map_err(|_| EngineError::Failed)?,
@@ -201,7 +196,7 @@ impl PocketEngine {
             Some(move |samples: &[f32], _progress: f32| {
                 let stop = if callback_cancel.load(Ordering::Acquire) {
                     Some(EngineError::Cancelled)
-                } else if started.elapsed() >= timeout {
+                } else if started.elapsed() >= options.timeout {
                     Some(EngineError::Timeout)
                 } else {
                     None
@@ -218,7 +213,7 @@ impl PocketEngine {
                     set_status(&callback_status, EngineError::OutputTooLarge);
                     return false;
                 };
-                if new_byte_length > max_audio_bytes.saturating_sub(counters.0) {
+                if new_byte_length > options.max_audio_bytes.saturating_sub(counters.0) {
                     set_status(&callback_status, EngineError::OutputTooLarge);
                     return false;
                 }
