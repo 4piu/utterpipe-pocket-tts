@@ -1,6 +1,8 @@
 use std::{
     fs,
+    io::{Read, Write},
     path::{Path, PathBuf},
+    process::{Child, ChildStdin, ChildStdout, Command, Stdio},
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -8,6 +10,7 @@ use std::{
     time::Duration,
 };
 
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 use utterpipe_pocket_tts::{
@@ -15,6 +18,74 @@ use utterpipe_pocket_tts::{
     model::{LICENSE_IDS, MODEL_ID},
     store::{Store, StoreError},
 };
+
+const CONTROL: u8 = 0x01;
+const AUDIO: u8 = 0x02;
+
+struct ProviderProcess {
+    child: Child,
+    stdin: ChildStdin,
+    stdout: ChildStdout,
+}
+
+impl ProviderProcess {
+    fn spawn() -> Self {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_utterpipe-pocket-tts"))
+            .args(["protocol", "--stdio"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn Pocket provider");
+        Self {
+            stdin: child.stdin.take().expect("provider stdin"),
+            stdout: child.stdout.take().expect("provider stdout"),
+            child,
+        }
+    }
+
+    fn request(&mut self, id: &str, method: &str, params: Value) {
+        let payload = serde_json::to_vec(&json!({
+            "kind":"request", "id":id, "method":method, "params":params
+        }))
+        .unwrap();
+        write_frame(&mut self.stdin, CONTROL, &payload);
+    }
+
+    fn control(&mut self) -> Value {
+        let (kind, payload) = read_frame(&mut self.stdout);
+        assert_eq!(kind, CONTROL);
+        serde_json::from_slice(&payload).unwrap()
+    }
+
+    fn shutdown(mut self) {
+        self.request("shutdown", "session.shutdown", json!({}));
+        assert_eq!(self.control()["result"]["accepted"], true);
+        drop(self.stdin);
+        assert!(self.child.wait().unwrap().success());
+    }
+}
+
+fn write_frame(writer: &mut impl Write, kind: u8, payload: &[u8]) {
+    let mut header = [0_u8; 12];
+    header[..4].copy_from_slice(b"UTP1");
+    header[4] = kind;
+    header[8..].copy_from_slice(&u32::try_from(payload.len()).unwrap().to_be_bytes());
+    writer.write_all(&header).unwrap();
+    writer.write_all(payload).unwrap();
+    writer.flush().unwrap();
+}
+
+fn read_frame(reader: &mut impl Read) -> (u8, Vec<u8>) {
+    let mut header = [0_u8; 12];
+    reader.read_exact(&mut header).unwrap();
+    assert_eq!(&header[..4], b"UTP1");
+    assert_eq!(&header[5..8], &[0, 0, 0]);
+    let length = u32::from_be_bytes(header[8..12].try_into().unwrap()) as usize;
+    let mut payload = vec![0_u8; length];
+    reader.read_exact(&mut payload).unwrap();
+    (header[4], payload)
+}
 
 fn fixture(name: &str) -> PathBuf {
     std::env::var_os(name)
@@ -163,4 +234,100 @@ async fn real_inference_streams_cancels_and_honors_shared_leases() {
         cancelled_generation.await.unwrap(),
         Err(EngineError::Cancelled)
     ));
+    drop(engine);
+    drop(first_assets);
+
+    protocol_incremental_smoke(&temp);
+}
+
+fn protocol_incremental_smoke(temp: &TempDir) {
+    let mut provider = ProviderProcess::spawn();
+    provider.request(
+        "hello",
+        "protocol.hello",
+        json!({
+            "protocol":"utterpipe.tts",
+            "versions":[2],
+            "expected_provider":"pocket-tts",
+            "session":"runtime",
+            "utterance_schema_profiles":["utterpipe.utterance-options/1"],
+            "host":{"name":"real-model-test", "version":"0.2.0"}
+        }),
+    );
+    let hello = provider.control();
+    assert_eq!(hello["result"]["version"], 2);
+    assert_eq!(hello["result"]["provider"]["slug"], "pocket-tts");
+
+    provider.request(
+        "init",
+        "session.initialize",
+        json!({
+            "data_dir":temp.path().join("data").to_string_lossy(),
+            "cache_dir":temp.path().join("cache").to_string_lossy(),
+            "provider_options":{
+                "model":MODEL_ID,
+                "voice":"bria-local",
+                "num_threads":2,
+                "speed":1.0,
+                "seed":42
+            },
+            "limits":{
+                "max_text_code_points":500,
+                "max_audio_bytes":16_777_216,
+                "synthesis_timeout_ms":90_000
+            },
+            "accepted_audio_deliveries":[
+                {"mode":"incremental", "format":"audio/pcm;codec=pcm_s16le"}
+            ]
+        }),
+    );
+    let initialized = provider.control();
+    assert_eq!(initialized["result"]["ready"], true);
+    assert_eq!(
+        initialized["result"]["audio_delivery"],
+        json!({"mode":"incremental", "format":"audio/pcm;codec=pcm_s16le"})
+    );
+    assert!(
+        initialized["result"]["utterance_options_schema_digest"]
+            .as_str()
+            .is_some_and(|digest| digest.starts_with("sha256:"))
+    );
+
+    provider.request(
+        "synth",
+        "synthesis.start",
+        json!({
+            "text":"Pocket TTS protocol version two streams this real synthesis.",
+            "utterance_options":{"speed":1.1, "seed":43}
+        }),
+    );
+    let mut pcm = Vec::new();
+    let mut began = false;
+    loop {
+        let (kind, payload) = read_frame(&mut provider.stdout);
+        if kind == AUDIO {
+            assert!(began);
+            pcm.extend_from_slice(&payload);
+            continue;
+        }
+        assert_eq!(kind, CONTROL);
+        let control: Value = serde_json::from_slice(&payload).unwrap();
+        if control["kind"] == "event" {
+            assert_eq!(control["event"], "synthesis.audio_begin");
+            assert_eq!(control["params"]["request_id"], "synth");
+            began = true;
+            continue;
+        }
+        assert_eq!(control["id"], "synth");
+        assert!(control.get("error").is_none(), "{control}");
+        assert_eq!(
+            control["result"]["audio"]["byte_length"].as_u64(),
+            Some(u64::try_from(pcm.len()).unwrap())
+        );
+        assert_eq!(control["result"]["audio"]["sample_rate_hz"], 24_000);
+        break;
+    }
+    assert!(began && pcm.len() > 2);
+    assert!(pcm.chunks_exact(2).any(|sample| sample != [0, 0]));
+    provider.shutdown();
 }
