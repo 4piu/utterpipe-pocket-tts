@@ -1,7 +1,8 @@
 # UtterPipe Pocket TTS provider
 
-A local, offline-after-setup [UtterPipe](../utterpipe/SPEC.md) provider for
-[Pocket TTS](https://github.com/kyutai-labs/pocket-tts). It is one small
+A local, offline-after-setup
+[UtterPipe](https://github.com/4piu/utterpipe/blob/main/docs/SPEC.md) provider
+for [Pocket TTS](https://github.com/kyutai-labs/pocket-tts). It is one small
 standalone executable; model weights and user-approved reference voices are
 installed separately in host-supplied data/cache directories.
 
@@ -20,7 +21,8 @@ dependency checks before publishing any target.
 The converted model archive discloses CC-BY-4.0 terms, upstream acceptable-use
 conditions, and an explicit non-commercial notice. The preparation command
 shows and requires all three acknowledgements. See
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and [SPEC.md](SPEC.md).
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and the
+[provider specification](docs/SPEC.md).
 
 ## Install and discovery
 
@@ -99,7 +101,8 @@ max_reference_audio_seconds = 10.0
 voice_embedding_cache_capacity = 16
 ```
 
-See [SPEC.md](SPEC.md) for ranges, exact wire contracts, model hashes, storage
+See [the provider specification](docs/SPEC.md) for ranges, exact wire contracts,
+model hashes, storage
 layout, network policy, and error mapping.
 
 ## Build

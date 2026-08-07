@@ -111,7 +111,7 @@ mod tests {
             WINDOWS_X64_NATIVE_ARCHIVE_SHA256,
         ] {
             assert!(include_str!("../README.md").contains(checksum));
-            assert!(include_str!("../SPEC.md").contains(checksum));
+            assert!(include_str!("../docs/SPEC.md").contains(checksum));
         }
     }
 }
