@@ -5,8 +5,7 @@ A local, offline-after-setup
 for [Pocket TTS](https://github.com/kyutai-labs/pocket-tts). It is one small
 standalone executable; model weights and user-approved reference voices are
 installed separately in host-supplied data/cache directories.
-It is a generic building block for any compatible UtterPipe host and does not
-depend on Agent Speak.
+The launching UtterPipe host supplies storage roots and session options.
 
 The provider supports complete PCM16 WAV and genuine incremental 24 kHz mono
 PCM16 output. It keeps one warm sherpa-onnx engine per runtime process and can
@@ -26,31 +25,79 @@ shows and requires all three acknowledgements. See
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and the
 [provider specification](docs/SPEC.md).
 
-## Install and discovery
+## Install
 
-Download the executable for your platform and place it next to the host or on
-`PATH` as `utterpipe-pocket-tts`. Agent Speak discovers providers by executable
-name; there is no registry or provider-specific configuration file. The host's
-single `config.toml` selects the provider, model, imported voice ID, and options.
+Download the executable for your platform as `utterpipe-pocket-tts`. Agent
+Speak discovers it beside the `agent-speak` executable or on `PATH`; other
+UtterPipe hosts define their own discovery behavior. There is no registry or
+provider-specific configuration file.
 
 After the first tagged release, the repository scripts provide
 checksum-verifying per-user installation:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/4piu/utterpipe-pocket-tts/main/install.sh | sh
-curl -fsSL https://raw.githubusercontent.com/4piu/utterpipe-pocket-tts/main/install.sh | sh -s -- --uninstall
 ```
 
 ```powershell
 irm https://raw.githubusercontent.com/4piu/utterpipe-pocket-tts/main/install.ps1 | iex
+```
+
+Remove the executable while preserving models and imported voices with:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/4piu/utterpipe-pocket-tts/main/install.sh | sh -s -- --uninstall
+```
+
+```powershell
 & ([scriptblock]::Create((irm https://raw.githubusercontent.com/4piu/utterpipe-pocket-tts/main/install.ps1))) -Uninstall
 ```
 
 Model and imported voice assets are preserved by default. Add `--purge` or
 `-Purge` only to irreversibly delete them during uninstall.
 
-The model and imported voice are not bundled. Prepare the model once, then
-import a reference WAV for which you have the necessary rights and consent:
+## Use with Agent Speak
+
+Select the provider, model, and imported voice in Agent Speak's only config
+file:
+
+```toml
+schema_version = 1
+
+[tts]
+enabled = true
+backend = "utterpipe-pocket-tts"
+model_id = "pocket-tts-int8-2026-01-26"
+voice_id = "my-voice"
+maximum_characters = 500
+
+[tts.provider_options]
+num_threads = 2
+speed = 1.0
+seed = 42
+```
+
+The model and voice are not bundled. Use Agent Speak's management commands so
+preparation and serving receive the same platform-default storage roots:
+
+```text
+agent-speak prepare --config ./agent-speak.toml \
+  --accept-license pocket-tts-cc-by-4.0 \
+  --accept-license pocket-tts-acceptable-use \
+  --accept-license pocket-tts-converted-artifact-non-commercial --yes
+
+agent-speak provider voices import --config ./agent-speak.toml \
+  --source /absolute/reference.wav --id my-voice --consent-confirmed
+```
+
+Reference audio must be a regular mono PCM16 RIFF/WAVE file at 16–48 kHz,
+between 1 and 30 seconds, and no larger than 5 MiB.
+
+## Direct provider commands
+
+Custom-host integrators and provider developers can manage explicit roots
+directly. The `--data-dir` and `--cache-dir` values must exactly match the roots
+that the host will later pass to the provider:
 
 ```text
 utterpipe-pocket-tts models prepare \
@@ -63,11 +110,6 @@ utterpipe-pocket-tts voices import /absolute/reference.wav --id my-voice \
   --consent-confirmed \
   --data-dir /absolute/provider-data --cache-dir /absolute/provider-cache
 ```
-
-Reference audio must be a regular mono PCM16 RIFF/WAVE file at 16–48 kHz,
-between 1 and 30 seconds, and no larger than 5 MiB.
-
-## Commands
 
 ```text
 utterpipe-pocket-tts info
