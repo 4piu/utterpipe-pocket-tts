@@ -5,6 +5,8 @@ A local, offline-after-setup
 for [Pocket TTS](https://github.com/kyutai-labs/pocket-tts). It is one small
 standalone executable; model weights and user-approved reference voices are
 installed separately in host-supplied data/cache directories.
+It is a generic building block for any compatible UtterPipe host and does not
+depend on Agent Speak.
 
 The provider supports complete PCM16 WAV and genuine incremental 24 kHz mono
 PCM16 output. It keeps one warm sherpa-onnx engine per runtime process and can
