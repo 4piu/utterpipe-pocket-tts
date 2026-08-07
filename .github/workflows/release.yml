@@ -78,7 +78,11 @@ jobs:
           native="$native_dir/${{ matrix.archive }}"
           curl --fail --location --retry 3 --output "$native" \
             "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.4/${{ matrix.archive }}"
-          actual="$(shasum -a 256 "$native" | awk '{print $1}')"
+          if command -v sha256sum >/dev/null 2>&1; then
+            actual="$(sha256sum "$native" | awk '{print $1}')"
+          else
+            actual="$(shasum -a 256 "$native" | awk '{print $1}')"
+          fi
           test "$actual" = "${{ matrix.sha256 }}" || {
             echo "sherpa-onnx archive checksum mismatch" >&2
             exit 1
@@ -87,7 +91,11 @@ jobs:
           model="$fixture_dir/sherpa-onnx-pocket-tts-int8-2026-01-26.tar.bz2"
           curl --fail --location --retry 3 --output "$model" \
             https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/sherpa-onnx-pocket-tts-int8-2026-01-26.tar.bz2
-          actual="$(shasum -a 256 "$model" | awk '{print $1}')"
+          if command -v sha256sum >/dev/null 2>&1; then
+            actual="$(sha256sum "$model" | awk '{print $1}')"
+          else
+            actual="$(shasum -a 256 "$model" | awk '{print $1}')"
+          fi
           test "$actual" = "2f3b88823cbbb9bf0b2477ec8ae7b3fec417b3a87b6bb5f256dba66f2ad967cb" || {
             echo "Pocket model archive checksum mismatch" >&2
             exit 1
@@ -140,7 +148,11 @@ jobs:
             mkdir -p "$extract_root"
             tar -C "$extract_root" -xzf "$archive"
           fi
-          hash="$(shasum -a 256 "$archive" | awk '{print $1}')"
+          if command -v sha256sum >/dev/null 2>&1; then
+            hash="$(sha256sum "$archive" | awk '{print $1}')"
+          else
+            hash="$(shasum -a 256 "$archive" | awk '{print $1}')"
+          fi
           printf '%s *%s\n' "$hash" "$(basename "$archive")" > "$archive.sha256"
 
           provider="$extract_root/$ARCHIVE_NAME/utterpipe-pocket-tts$suffix"
