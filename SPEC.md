@@ -88,16 +88,18 @@ but the provider does not grant any rights to the recording or generated voice.
 
 ## 4. Supported artifacts
 
-| OS | Architecture | Target | Runtime prerequisites | Initial status |
+| OS | Architecture | Target | Runtime prerequisites | Verification status |
 | --- | --- | --- | --- | --- |
-| macOS | arm64 | `aarch64-apple-darwin` | macOS 11+ | verified |
+| macOS | arm64 | `aarch64-apple-darwin` | macOS 11+ | verified locally |
 | macOS | x86_64 | `x86_64-apple-darwin` | macOS 11+ | planned |
-| Windows | x86_64 | `x86_64-pc-windows-msvc` | supported MSVC runtime baseline | planned |
-| Linux | x86_64 | `x86_64-unknown-linux-gnu` | compatible glibc | planned |
+| Windows | x86_64 | `x86_64-pc-windows-msvc` | Windows system DLLs; static MSVC CRT | verified locally |
+| Linux | x86_64 | `x86_64-unknown-linux-gnu` | compatible glibc and libstdc++ | verified locally |
 
-Only targets that pass the full native inference and conformance matrix may be
-published. The macOS arm64 spike produced a 24 MiB Mach-O whose dynamic
-dependencies were only Apple system libraries/frameworks.
+Only targets that pass the full native inference and conformance matrix in
+release CI may be published. Local release probes produced a 24 MiB macOS
+arm64 Mach-O, a 35,574,584-byte Linux x86_64 ELF, and a 24,285,184-byte Windows
+x86_64 PE. The macOS and Windows binaries depend only on OS libraries; the
+Linux binary additionally uses the system glibc, libstdc++, libgcc, and libm.
 
 “Single executable” describes the provider program, not its roughly 98 MB
 compressed model download, roughly 198 MB selected installed model files, or
@@ -113,11 +115,13 @@ script fetch native libraries implicitly: CI downloads the exact per-target
 archive, verifies a repository-pinned SHA-256 value, and supplies it through
 `SHERPA_ONNX_ARCHIVE_DIR` or builds equivalent pinned libraries from source.
 
-On macOS arm64 the verified `v1.13.4` static native archive SHA-256 is:
+The verified `v1.13.4` static native archive SHA-256 values are:
 
-```text
-57801db2bbb786a5d343f515a38ff210b401842338bdc804fa075312d1cd2404
-```
+| Target | SHA-256 |
+| --- | --- |
+| macOS arm64 | `57801db2bbb786a5d343f515a38ff210b401842338bdc804fa075312d1cd2404` |
+| Linux x86_64 | `98b0e31996426f6e78244dbce1955548f2c64e8f01c4be75b85af7cdaa2e8d5c` |
+| Windows x86_64 MT release | `d81bd1d25112540862d2387072e76b2b6843ef962918d6b5c7db5a19c6276b4c` |
 
 The 2026-08-06 feasibility probe established:
 
@@ -129,6 +133,12 @@ The 2026-08-06 feasibility probe established:
   consecutive callbacks whose sample counts equal the final waveform;
 - returning false from the first callback stopped inference after about 0.64
   seconds and returned only that 1.2-second partial waveform.
+
+The same day, Linux x86_64 and Windows x86_64 passed the complete mock and
+process test suites plus the opt-in real-model test. That test exercised
+incremental multi-frame output, bounded output rejection, cancellation after a
+genuine callback, warm-engine reuse, and cross-process asset leases. Windows
+uses a static MSVC CRT to match sherpa-onnx's pinned `MT` archive.
 
 The callback is therefore genuine incremental generation and cooperative
 cancellation, not post-generation slicing. Performance figures are evidence,

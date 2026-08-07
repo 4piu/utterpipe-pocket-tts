@@ -13,8 +13,9 @@ serve repeated sequential utterances without Python or a child service.
 
 Version 0.1 pins one converted int8 model,
 `pocket-tts-int8-2026-01-26`, and statically links sherpa-onnx 1.13.4. macOS
-arm64 is verified locally. Other targets are publishable only after their
-native archive, inference, conformance, and dependency checks pass.
+arm64, Linux x86_64, and Windows x86_64 are verified locally. A release target
+is publishable only after the same native inference, conformance, and dependency
+checks pass in release CI.
 
 The converted model archive discloses CC-BY-4.0 terms, upstream acceptable-use
 conditions, and an explicit non-commercial notice. The preparation command
@@ -95,11 +96,16 @@ release build never depends on an implicit build-time download:
 SHERPA_ONNX_ARCHIVE_DIR=/absolute/sherpa-onnx-prebuilt cargo build --locked --release
 ```
 
-For the verified macOS arm64 build, the pinned sherpa native archive SHA-256 is:
+The verified sherpa native archives are:
 
-```text
-57801db2bbb786a5d343f515a38ff210b401842338bdc804fa075312d1cd2404
-```
+| Target | Archive | SHA-256 |
+| --- | --- | --- |
+| macOS arm64 | `sherpa-onnx-v1.13.4-osx-arm64-static-lib.tar.bz2` | `57801db2bbb786a5d343f515a38ff210b401842338bdc804fa075312d1cd2404` |
+| Linux x86_64 | `sherpa-onnx-v1.13.4-linux-x64-static-lib.tar.bz2` | `98b0e31996426f6e78244dbce1955548f2c64e8f01c4be75b85af7cdaa2e8d5c` |
+| Windows x86_64 | `sherpa-onnx-v1.13.4-win-x64-static-MT-Release-lib.tar.bz2` | `d81bd1d25112540862d2387072e76b2b6843ef962918d6b5c7db5a19c6276b4c` |
+
+The repository configures a static MSVC CRT for Windows x86_64 so it matches
+the pinned `MT` archive and does not require a separately installed VC runtime.
 
 Run the ordinary and opt-in real-model tests with:
 

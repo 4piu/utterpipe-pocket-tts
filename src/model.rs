@@ -6,6 +6,10 @@ pub const ARCHIVE_NAME: &str = "sherpa-onnx-pocket-tts-int8-2026-01-26.tar.bz2";
 pub const ARCHIVE_SHA256: &str = "2f3b88823cbbb9bf0b2477ec8ae7b3fec417b3a87b6bb5f256dba66f2ad967cb";
 pub const MACOS_ARM64_NATIVE_ARCHIVE_SHA256: &str =
     "57801db2bbb786a5d343f515a38ff210b401842338bdc804fa075312d1cd2404";
+pub const LINUX_X64_NATIVE_ARCHIVE_SHA256: &str =
+    "98b0e31996426f6e78244dbce1955548f2c64e8f01c4be75b85af7cdaa2e8d5c";
+pub const WINDOWS_X64_NATIVE_ARCHIVE_SHA256: &str =
+    "d81bd1d25112540862d2387072e76b2b6843ef962918d6b5c7db5a19c6276b4c";
 pub const ARCHIVE_BYTES: u64 = 98_336_520;
 pub const INSTALLED_BYTES: u64 = 198_310_873;
 pub const SOURCE_URL: &str = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/sherpa-onnx-pocket-tts-int8-2026-01-26.tar.bz2";
@@ -98,7 +102,13 @@ mod tests {
 
     #[test]
     fn native_archive_checksum_is_consistent_in_release_docs() {
-        assert!(include_str!("../README.md").contains(MACOS_ARM64_NATIVE_ARCHIVE_SHA256));
-        assert!(include_str!("../SPEC.md").contains(MACOS_ARM64_NATIVE_ARCHIVE_SHA256));
+        for checksum in [
+            MACOS_ARM64_NATIVE_ARCHIVE_SHA256,
+            LINUX_X64_NATIVE_ARCHIVE_SHA256,
+            WINDOWS_X64_NATIVE_ARCHIVE_SHA256,
+        ] {
+            assert!(include_str!("../README.md").contains(checksum));
+            assert!(include_str!("../SPEC.md").contains(checksum));
+        }
     }
 }

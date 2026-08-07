@@ -954,10 +954,23 @@ fn rollback_active_pointers(staged: &[(PathBuf, PathBuf)]) -> Result<(), StoreEr
     Ok(())
 }
 
+#[cfg(not(windows))]
 fn sync_dir(path: &Path) -> Result<(), StoreError> {
     File::open(path)
         .and_then(|directory| directory.sync_all())
         .map_err(|_| StoreError::Io)
+}
+
+#[cfg(windows)]
+fn sync_dir(path: &Path) -> Result<(), StoreError> {
+    // Rust's safe std API cannot open a directory handle for flushing on
+    // Windows. Validate that the target still is a directory; the preceding
+    // file flushes and atomic rename remain the available durability boundary.
+    if path.is_dir() {
+        Ok(())
+    } else {
+        Err(StoreError::Io)
+    }
 }
 
 fn operation_id() -> String {
