@@ -70,16 +70,21 @@ file:
 ```toml
 schema_version = 1
 
+# Selects the provider and host-side synthesis policy.
 [tts]
 enabled = true
 backend = "utterpipe-pocket-tts"
 maximum_characters = 500
 agent_utterance_options = ["speed", "seed"]
 
+# Fixes expensive model, voice, and engine settings for the provider process.
 [tts.provider_options]
 model = "pocket-tts-int8-2026-01-26"
 voice = "my-voice"
 num_threads = 2
+
+# Sets inexpensive per-request defaults that authorized agent values may override.
+[tts.utterance_options]
 speed = 1.0
 seed = 42
 ```
@@ -142,22 +147,20 @@ voice.
 
 ## Provider options
 
-`model` and `voice` are required runtime selections. The engine controls have
-the defaults shown below.
+`model` and `voice` are required runtime selections. Expensive engine state is
+fixed for the process:
 
 ```toml
 model = "pocket-tts-int8-2026-01-26"
 voice = "my-voice"
 num_threads = 2
-speed = 1.0
-seed = 42
 max_reference_audio_seconds = 10.0
 voice_embedding_cache_capacity = 16
 ```
 
-The host may pass `speed` and `seed` for one synthesis request when the user
-allows those agent-controlled options. Per-request values override the fixed
-defaults without changing the config file. Other controls remain startup-fixed.
+The per-request `speed` and `seed` options default to `1.0` and `42`. A host may
+send configured values on every synthesis and allow an agent to override them
+for one request; they never change initialized engine state.
 
 See [the provider specification](docs/SPEC.md) for ranges, exact wire contracts,
 model hashes, storage

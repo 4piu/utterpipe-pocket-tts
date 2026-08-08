@@ -25,8 +25,6 @@ pub const SAMPLE_RATE: u32 = 24_000;
 #[serde(default, deny_unknown_fields)]
 pub struct EngineOptions {
     pub num_threads: u32,
-    pub speed: f64,
-    pub seed: u32,
     pub max_reference_audio_seconds: f64,
     pub voice_embedding_cache_capacity: u32,
 }
@@ -35,8 +33,6 @@ impl Default for EngineOptions {
     fn default() -> Self {
         Self {
             num_threads: 2,
-            speed: 1.0,
-            seed: 42,
             max_reference_audio_seconds: 10.0,
             voice_embedding_cache_capacity: 16,
         }
@@ -51,8 +47,6 @@ impl EngineOptions {
     /// Returns [`EngineError::InvalidOptions`] for an out-of-range value.
     pub fn validate(&self) -> Result<(), EngineError> {
         if !(1..=64).contains(&self.num_threads)
-            || !self.speed.is_finite()
-            || !(0.5..=2.0).contains(&self.speed)
             || !self.max_reference_audio_seconds.is_finite()
             || !(1.0..=30.0).contains(&self.max_reference_audio_seconds)
             || !(1..=128).contains(&self.voice_embedding_cache_capacity)

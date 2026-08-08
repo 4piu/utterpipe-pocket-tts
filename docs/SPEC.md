@@ -193,8 +193,6 @@ Unknown options are rejected. Runtime initialization requires `model` and
 | `model` | string | required | must equal `pocket-tts-int8-2026-01-26` |
 | `voice` | string | required | installed voice ID matching the import rules |
 | `num_threads` | integer | `2` | `1..64`; sherpa-onnx CPU inference threads |
-| `speed` | number | `1.0` | finite `0.5..2.0`; Pocket generation speed multiplier |
-| `seed` | integer | `42` | `0..4294967295`; fixed synthesis seed |
 | `max_reference_audio_seconds` | number | `10.0` | finite `1.0..30.0`; maximum prompt audio used by the engine |
 | `voice_embedding_cache_capacity` | integer | `16` | `1..128`; in-memory embeddings per runtime process |
 
@@ -203,9 +201,10 @@ with `additionalProperties: false`. None is a secret. There is no configurable o
 sample rate: the provider reports the engine's actual 24,000 Hz output and the
 host adapts it to the playback device.
 
-`speed` and `seed` are fixed defaults which may be overridden for one request
-through the negotiated utterance-options schema. The remaining controls are
-startup-fixed. `seed` makes repeated requests reproducible only to the extent supported by the
+The resolved utterance-options schema exposes `speed` (finite `0.5..2.0`,
+default `1.0`) and `seed` (`0..4294967295`, default `42`). The host sends either
+value only for the current request; all provider options are startup-fixed.
+`seed` makes repeated requests reproducible only to the extent supported by the
 pinned engine, target, and thread configuration. Bit-identical output across
 platforms is not promised.
 

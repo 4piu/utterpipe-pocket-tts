@@ -267,9 +267,7 @@ fn protocol_incremental_smoke(temp: &TempDir) {
             "provider_options":{
                 "model":MODEL_ID,
                 "voice":"bria-local",
-                "num_threads":2,
-                "speed":1.0,
-                "seed":42
+                "num_threads":2
             },
             "limits":{
                 "max_text_code_points":500,
@@ -284,8 +282,8 @@ fn protocol_incremental_smoke(temp: &TempDir) {
     let initialized = provider.control();
     assert_eq!(initialized["result"]["ready"], true);
     assert_eq!(
-        initialized["result"]["audio_delivery"],
-        json!({"mode":"incremental", "format":"audio/pcm;codec=pcm_s16le"})
+        initialized["result"]["audio_deliveries"],
+        json!([{"mode":"incremental", "format":"audio/pcm;codec=pcm_s16le"}])
     );
     assert!(
         initialized["result"]["utterance_options_schema_digest"]
@@ -298,6 +296,7 @@ fn protocol_incremental_smoke(temp: &TempDir) {
         "synthesis.start",
         json!({
             "text":"Pocket TTS protocol version two streams this real synthesis.",
+            "audio_delivery":{"mode":"incremental", "format":"audio/pcm;codec=pcm_s16le"},
             "utterance_options":{"speed":1.1, "seed":43}
         }),
     );

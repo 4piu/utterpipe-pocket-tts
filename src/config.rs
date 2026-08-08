@@ -14,10 +14,6 @@ pub struct ProviderOptions {
     #[serde(default, deserialize_with = "optional_non_null")]
     pub num_threads: Option<u32>,
     #[serde(default, deserialize_with = "optional_non_null")]
-    pub speed: Option<f64>,
-    #[serde(default, deserialize_with = "optional_non_null")]
-    pub seed: Option<u32>,
-    #[serde(default, deserialize_with = "optional_non_null")]
     pub max_reference_audio_seconds: Option<f64>,
     #[serde(default, deserialize_with = "optional_non_null")]
     pub voice_embedding_cache_capacity: Option<u32>,
@@ -77,7 +73,6 @@ impl ProviderOptions {
         }
         validate_engine_controls(
             self.num_threads,
-            self.speed,
             self.max_reference_audio_seconds,
             self.voice_embedding_cache_capacity,
         )
@@ -101,8 +96,6 @@ impl ProviderOptions {
         let defaults = EngineOptions::default();
         EngineOptions {
             num_threads: self.num_threads.unwrap_or(defaults.num_threads),
-            speed: self.speed.unwrap_or(defaults.speed),
-            seed: self.seed.unwrap_or(defaults.seed),
             max_reference_audio_seconds: self
                 .max_reference_audio_seconds
                 .unwrap_or(defaults.max_reference_audio_seconds),
@@ -110,15 +103,6 @@ impl ProviderOptions {
                 .voice_embedding_cache_capacity
                 .unwrap_or(defaults.voice_embedding_cache_capacity),
         }
-    }
-
-    #[must_use]
-    pub fn effective_controls(&self, utterance: &UtteranceOptions) -> (f64, u32) {
-        let engine = self.engine_options();
-        (
-            utterance.speed.unwrap_or(engine.speed),
-            utterance.seed.unwrap_or(engine.seed),
-        )
     }
 }
 
@@ -129,21 +113,22 @@ impl UtteranceOptions {
     ///
     /// Returns [`ConfigError`] when a supplied control is outside its schema.
     pub fn validate(&self) -> Result<(), ConfigError> {
-        validate_engine_controls(None, self.speed, None, None)
+        validate_request_controls(self.speed)
+    }
+
+    #[must_use]
+    pub fn effective_controls(&self) -> (f64, u32) {
+        (self.speed.unwrap_or(1.0), self.seed.unwrap_or(42))
     }
 }
 
 fn validate_engine_controls(
     num_threads: Option<u32>,
-    speed: Option<f64>,
     max_reference_audio_seconds: Option<f64>,
     voice_embedding_cache_capacity: Option<u32>,
 ) -> Result<(), ConfigError> {
     if num_threads.is_some_and(|value| !(1..=64).contains(&value)) {
         return Err(ConfigError::Threads);
-    }
-    if speed.is_some_and(|value| !value.is_finite() || !(0.5..=2.0).contains(&value)) {
-        return Err(ConfigError::Speed);
     }
     if max_reference_audio_seconds
         .is_some_and(|value| !value.is_finite() || !(1.0..=30.0).contains(&value))
@@ -152,6 +137,13 @@ fn validate_engine_controls(
     }
     if voice_embedding_cache_capacity.is_some_and(|value| !(1..=128).contains(&value)) {
         return Err(ConfigError::VoiceCache);
+    }
+    Ok(())
+}
+
+fn validate_request_controls(speed: Option<f64>) -> Result<(), ConfigError> {
+    if speed.is_some_and(|value| !value.is_finite() || !(0.5..=2.0).contains(&value)) {
+        return Err(ConfigError::Speed);
     }
     Ok(())
 }
@@ -184,8 +176,6 @@ pub fn management_options_schema() -> Value {
             "model": {"type":"string", "enum":[MODEL_ID]},
             "voice": {"type":"string", "minLength":1, "maxLength":64, "pattern":"^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?$"},
             "num_threads": {"type":"integer", "minimum":1, "maximum":64, "default":2},
-            "speed": {"type":"number", "minimum":0.5, "maximum":2.0, "default":1.0},
-            "seed": {"type":"integer", "minimum":0, "maximum":4294967295_u64, "default":42},
             "max_reference_audio_seconds": {"type":"number", "minimum":1.0, "maximum":30.0, "default":10.0},
             "voice_embedding_cache_capacity": {"type":"integer", "minimum":1, "maximum":128, "default":16}
         }
@@ -205,9 +195,9 @@ pub fn utterance_options_schema() -> Value {
                 "title":"Speaking speed",
                 "description":"Sets the Pocket TTS speaking-speed multiplier for this utterance.",
                 "x-utterpipe":{
-                    "default_behavior":"Omission uses the configured speed or 1.0.",
+                    "default_behavior":"Omission uses the provider's 1.0 speed.",
                     "use_when":"Use when this utterance should be spoken faster or slower.",
-                    "omit_when":"Omit when the configured speaking speed is suitable.",
+                    "omit_when":"Omit when normal speaking speed is suitable.",
                     "unit":"multiplier"
                 }
             },
@@ -216,7 +206,7 @@ pub fn utterance_options_schema() -> Value {
                 "title":"Generation seed",
                 "description":"Sets the Pocket TTS sampling seed for this utterance.",
                 "x-utterpipe":{
-                    "default_behavior":"Omission uses the configured seed or 42.",
+                    "default_behavior":"Omission uses the provider's seed 42.",
                     "use_when":"Use when a repeatable alternative rendering is wanted.",
                     "omit_when":"Omit unless generation variation or reproducibility matters.",
                     "effects":["Changing the seed may change pronunciation timing and vocal detail."]
@@ -241,12 +231,9 @@ mod tests {
     }
 
     #[test]
-    fn request_controls_override_fixed_defaults() {
-        let fixed: ProviderOptions = serde_json::from_value(json!({
-            "model":MODEL_ID, "voice":"test-voice", "speed":0.9, "seed":12
-        }))
-        .unwrap();
+    fn request_controls_use_request_or_engine_defaults() {
         let utterance: UtteranceOptions = serde_json::from_value(json!({"speed":1.2})).unwrap();
-        assert_eq!(fixed.effective_controls(&utterance), (1.2, 12));
+        assert_eq!(utterance.effective_controls(), (1.2, 42));
+        assert_eq!(UtteranceOptions::default().effective_controls(), (1.0, 42));
     }
 }

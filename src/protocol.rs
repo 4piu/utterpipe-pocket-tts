@@ -11,7 +11,7 @@ use std::{
 
 use futures_util::StreamExt;
 use serde::{
-    Deserialize, Deserializer,
+    Deserialize, Deserializer, Serialize,
     de::{MapAccess, SeqAccess, Visitor},
 };
 use serde_json::{Map, Number, Value, json};
@@ -90,8 +90,7 @@ struct Request {
 struct RuntimeState {
     engine: Arc<PocketEngine>,
     assets: RuntimeAssets,
-    provider_options: ProviderOptions,
-    delivery: Delivery,
+    audio_deliveries: Vec<AudioDelivery>,
     max_text_code_points: usize,
     max_audio_bytes: usize,
     timeout: Duration,
@@ -206,7 +205,7 @@ struct ManagementInitializeParams {
     provider_options: Map<String, Value>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 struct AudioDelivery {
     mode: String,
@@ -225,6 +224,7 @@ struct Limits {
 #[serde(deny_unknown_fields)]
 struct SynthesisParams {
     text: String,
+    audio_delivery: AudioDelivery,
     #[serde(default)]
     utterance_options: Map<String, Value>,
 }
@@ -518,7 +518,7 @@ pub async fn run_stdio() -> Result<(), ProtocolFailure> {
                     }
                     match initialize(chosen_session, &request.params).await {
                         Ok(Initialized::Runtime(state)) => {
-                            let delivery = state.delivery;
+                            let audio_deliveries = state.audio_deliveries.clone();
                             let schema = utterance_options_schema();
                             let digest = utterance_schema_digest(&schema)
                                 .map_err(|_| ProtocolFailure::Worker)?;
@@ -527,7 +527,7 @@ pub async fn run_stdio() -> Result<(), ProtocolFailure> {
                             write_result(
                                 &mut output,
                                 &request.id,
-                                initialize_runtime_result(delivery, schema, digest),
+                                initialize_runtime_result(audio_deliveries, schema, digest),
                             )
                             .await?;
                         }
@@ -581,6 +581,20 @@ pub async fn run_stdio() -> Result<(), ProtocolFailure> {
                             }
                         };
                         let state = runtime.as_ref().ok_or(ProtocolFailure::Worker)?;
+                        let Some(delivery) =
+                            selected_delivery(&state.audio_deliveries, &params.audio_delivery)
+                        else {
+                            write_error(
+                                &mut output,
+                                &request.id,
+                                &WireError::new(
+                                    "unsupported_audio_delivery",
+                                    "requested audio delivery is unavailable in this runtime",
+                                ),
+                            )
+                            .await?;
+                            continue;
+                        };
                         if params.text.is_empty()
                             || params.text.contains('\0')
                             || params.text.chars().count() > state.max_text_code_points
@@ -621,8 +635,13 @@ pub async fn run_stdio() -> Result<(), ProtocolFailure> {
                             .await?;
                             continue;
                         }
-                        synthesis =
-                            Some(start_synthesis(request.id, params.text, &utterance, state));
+                        synthesis = Some(start_synthesis(
+                            request.id,
+                            params.text,
+                            &utterance,
+                            delivery,
+                            state,
+                        ));
                     }
                     (Session::Runtime, "synthesis.cancel") => {
                         match decode_cancel(&request.params) {
@@ -796,6 +815,7 @@ fn start_synthesis(
     id: String,
     text: String,
     utterance: &UtteranceOptions,
+    delivery: Delivery,
     state: &RuntimeState,
 ) -> ActiveSynthesis {
     let (sender, chunks) = tokio::sync::mpsc::channel(4);
@@ -804,8 +824,8 @@ fn start_synthesis(
     let engine = Arc::clone(&state.engine);
     let reference = state.assets.reference.clone();
     let timeout = state.timeout;
-    let (speed, seed) = state.provider_options.effective_controls(utterance);
-    let max_audio_bytes = match state.delivery {
+    let (speed, seed) = utterance.effective_controls();
+    let max_audio_bytes = match delivery {
         Delivery::Complete => state.max_audio_bytes.saturating_sub(44),
         Delivery::Incremental => state.max_audio_bytes,
     };
@@ -825,7 +845,7 @@ fn start_synthesis(
     });
     ActiveSynthesis {
         id,
-        delivery: state.delivery,
+        delivery,
         cancellation,
         chunks,
         chunks_closed: false,
@@ -1036,7 +1056,7 @@ async fn initialize(session: Session, value: &Value) -> Result<Initialized, Wire
             "negotiated limits are invalid",
         ));
     }
-    let delivery = choose_delivery(&params.accepted_audio_deliveries)?;
+    let audio_deliveries = resolve_deliveries(&params.accepted_audio_deliveries)?;
     let max_text_code_points = usize::try_from(
         params
             .limits
@@ -1078,8 +1098,7 @@ async fn initialize(session: Session, value: &Value) -> Result<Initialized, Wire
     Ok(Initialized::Runtime(RuntimeState {
         engine: Arc::new(engine),
         assets,
-        provider_options: options,
-        delivery,
+        audio_deliveries,
         max_text_code_points,
         max_audio_bytes,
         timeout,
@@ -1101,20 +1120,20 @@ fn decode_provider_options(
     Ok(options)
 }
 
-fn initialize_runtime_result(delivery: Delivery, schema: Value, digest: String) -> Value {
-    let pair = match delivery {
-        Delivery::Complete => json!({"mode":"complete", "format":WAV_FORMAT}),
-        Delivery::Incremental => json!({"mode":"incremental", "format":PCM_FORMAT}),
-    };
+fn initialize_runtime_result(
+    audio_deliveries: Vec<AudioDelivery>,
+    schema: Value,
+    digest: String,
+) -> Value {
     json!({
         "ready":true,
-        "audio_delivery":pair,
+        "audio_deliveries":audio_deliveries,
         "utterance_options_schema":schema,
         "utterance_options_schema_digest":digest
     })
 }
 
-fn choose_delivery(deliveries: &[AudioDelivery]) -> Result<Delivery, WireError> {
+fn resolve_deliveries(deliveries: &[AudioDelivery]) -> Result<Vec<AudioDelivery>, WireError> {
     if deliveries.is_empty()
         || deliveries
             .iter()
@@ -1126,17 +1145,29 @@ fn choose_delivery(deliveries: &[AudioDelivery]) -> Result<Delivery, WireError> 
             "accepted audio deliveries must be nonempty and unique",
         ));
     }
-    for delivery in deliveries {
-        match (delivery.mode.as_str(), delivery.format.as_str()) {
-            ("incremental", PCM_FORMAT) => return Ok(Delivery::Incremental),
-            ("complete", WAV_FORMAT) => return Ok(Delivery::Complete),
-            _ => {}
-        }
+    if deliveries.iter().any(|delivery| {
+        !matches!(
+            (delivery.mode.as_str(), delivery.format.as_str()),
+            ("incremental", PCM_FORMAT) | ("complete", WAV_FORMAT)
+        )
+    }) {
+        return Err(WireError::new(
+            "invalid_message",
+            "accepted audio deliveries contain an unsupported pair",
+        ));
     }
-    Err(WireError::new(
-        "invalid_message",
-        "no mutually supported audio delivery mode",
-    ))
+    Ok(deliveries.to_vec())
+}
+
+fn selected_delivery(available: &[AudioDelivery], requested: &AudioDelivery) -> Option<Delivery> {
+    if !available.contains(requested) {
+        return None;
+    }
+    match (requested.mode.as_str(), requested.format.as_str()) {
+        ("incremental", PCM_FORMAT) => Some(Delivery::Incremental),
+        ("complete", WAV_FORMAT) => Some(Delivery::Complete),
+        _ => None,
+    }
 }
 
 fn hello(value: &Value) -> Result<(Session, Value), WireError> {
@@ -1195,11 +1226,11 @@ fn hello(value: &Value) -> Result<(Session, Value), WireError> {
             "provider_options_schema":provider_options_schema(),
             "management_options_schema":management_options_schema(),
             "catalogs":[
-                {"id":"models", "name":"Models", "description":"Pocket TTS model artifacts usable by this provider.", "item_kind":"model", "patchable_options":["model"]},
-                {"id":"voices", "name":"Voices", "description":"Imported consented reference voices usable by Pocket TTS.", "item_kind":"voice", "patchable_options":["voice"]}
+                {"id":"models", "name":"Models", "description":"Pocket TTS model artifacts usable by this provider.", "item_kind":"model", "patchable_provider_options":["model"], "patchable_utterance_options":[]},
+                {"id":"voices", "name":"Voices", "description":"Imported consented reference voices usable by Pocket TTS.", "item_kind":"voice", "patchable_provider_options":["voice"], "patchable_utterance_options":[]}
             ],
             "import_kinds":[
-                {"id":"voice", "name":"Voice reference", "media_types":["audio/wav"], "max_source_bytes":5_242_880, "patchable_options":["voice"]}
+                {"id":"voice", "name":"Voice reference", "media_types":["audio/wav"], "max_source_bytes":5_242_880, "patchable_provider_options":["voice"], "patchable_utterance_options":[]}
             ]
         }),
     ))
@@ -1277,6 +1308,7 @@ fn model_catalog_items(scope: &str, state: &ManagementState) -> Vec<Value> {
     }
     item["description"] = Value::String("Pinned English Pocket TTS int8 model.".into());
     item["provider_options_patch"] = json!({"model":MODEL_ID});
+    item["utterance_options_patch"] = json!({});
     item["artifacts"] = json!([format!("model:{MODEL_ID}")]);
     vec![item]
 }
@@ -1298,6 +1330,7 @@ fn voice_catalog_items(scope: &str, state: &ManagementState) -> Result<Vec<Value
                 voice["description"] =
                     Value::String("User-imported Pocket TTS reference voice.".into());
                 voice["provider_options_patch"] = json!({"voice":id});
+                voice["utterance_options_patch"] = json!({});
                 voice["artifacts"] = json!([format!(
                     "voice:{}",
                     voice["id"].as_str().unwrap_or_default()
@@ -1687,7 +1720,8 @@ fn start_asset_import(
         Ok(json!({
             "artifact_id":format!("voice:{result_id}"),
             "status":"installed",
-            "provider_options_patch":{"voice":result_id}
+            "provider_options_patch":{"voice":result_id},
+            "utterance_options_patch":{}
         }))
     });
     Ok(ActiveManagement {
@@ -2055,20 +2089,21 @@ mod tests {
         assert!(decode_strict_json(br#"{"a":1,"a":2}"#).is_err());
     }
     #[test]
-    fn delivery_follows_host_order() {
+    fn delivery_set_preserves_host_order_and_request_selects_exactly() {
+        let offered = vec![
+            AudioDelivery {
+                mode: "complete".into(),
+                format: WAV_FORMAT.into(),
+            },
+            AudioDelivery {
+                mode: "incremental".into(),
+                format: PCM_FORMAT.into(),
+            },
+        ];
+        assert_eq!(resolve_deliveries(&offered).unwrap(), offered);
         assert_eq!(
-            choose_delivery(&[
-                AudioDelivery {
-                    mode: "complete".into(),
-                    format: WAV_FORMAT.into()
-                },
-                AudioDelivery {
-                    mode: "incremental".into(),
-                    format: PCM_FORMAT.into()
-                }
-            ])
-            .unwrap(),
-            Delivery::Complete
+            selected_delivery(&offered, &offered[1]),
+            Some(Delivery::Incremental)
         );
     }
 
