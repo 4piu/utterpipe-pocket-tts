@@ -87,6 +87,25 @@ jobs:
             echo "sherpa-onnx archive checksum mismatch" >&2
             exit 1
           }
+          tar -xjf "$native" -C "$native_dir"
+          native_lib_dir="$(find "$native_dir" -mindepth 2 -maxdepth 2 -type d -name lib -print -quit)"
+          test -n "$native_lib_dir" || {
+            echo "sherpa-onnx archive has no library directory" >&2
+            exit 1
+          }
+          mkdir -p "$native_dir/excluded"
+          gpl_archive="$(find "$native_lib_dir" -maxdepth 1 -type f \( -name 'libespeak-ng.a' -o -name 'espeak-ng.lib' \) -print -quit)"
+          test -n "$gpl_archive" || {
+            echo "expected bundled eSpeak archive was not found" >&2
+            exit 1
+          }
+          mv "$gpl_archive" "$native_dir/excluded/"
+          unicode_archive="$(find "$native_lib_dir" -maxdepth 1 -type f \( -name 'libucd.a' -o -name 'ucd.lib' \) -print -quit)"
+          test -n "$unicode_archive" || {
+            echo "expected eSpeak Unicode-data archive was not found" >&2
+            exit 1
+          }
+          mv "$unicode_archive" "$native_dir/excluded/"
 
           model="$fixture_dir/sherpa-onnx-pocket-tts-int8-2026-01-26.tar.bz2"
           curl --fail --location --retry 3 --output "$model" \
@@ -102,10 +121,10 @@ jobs:
           }
 
           if [[ "${{ runner.os }}" == "Windows" ]]; then
-            native_dir="$(cygpath -w "$native_dir")"
+            native_lib_dir="$(cygpath -w "$native_lib_dir")"
             model="$(cygpath -w "$model")"
           fi
-          echo "SHERPA_ONNX_ARCHIVE_DIR=$native_dir" >> "$GITHUB_ENV"
+          echo "SHERPA_ONNX_LIB_DIR=$native_lib_dir" >> "$GITHUB_ENV"
           echo "UTTERPIPE_POCKET_MODEL_ARCHIVE=$model" >> "$GITHUB_ENV"
 
       - name: Test native inference and build release
@@ -130,9 +149,11 @@ jobs:
           fi
           package_root="$temp_dir/$ARCHIVE_NAME"
           dist="$workspace/dist"
-          mkdir -p "$package_root" "$dist"
+          mkdir -p "$package_root/native" "$dist"
           cp "target/$TARGET/release/utterpipe-pocket-tts$suffix" "$package_root/"
-          cp README.md THIRD_PARTY_NOTICES.md LICENSE install.sh install.ps1 "$package_root/"
+          cp README.md THIRD_PARTY_NOTICES.md THIRD_PARTY_LICENSES.html \
+            LICENSE install.sh install.ps1 "$package_root/"
+          cp native/ONNXRUNTIME_THIRD_PARTY_NOTICES.txt "$package_root/native/"
           cp -R docs "$package_root/"
 
           if [[ "$extension" == "zip" ]]; then
@@ -181,6 +202,14 @@ jobs:
       - name: Package source and CycloneDX SBOM
         shell: bash
         run: |
+          cargo fetch --locked
+          cargo install cargo-about --version 0.9.1 --features cli --locked
+          cargo about generate --locked --offline --fail --all-features \
+            about.hbs --output-file "$RUNNER_TEMP/THIRD_PARTY_LICENSES.generated.html"
+          tr -d '\r' < "$RUNNER_TEMP/THIRD_PARTY_LICENSES.generated.html" \
+            > "$RUNNER_TEMP/THIRD_PARTY_LICENSES.normalized.html"
+          cmp THIRD_PARTY_LICENSES.html "$RUNNER_TEMP/THIRD_PARTY_LICENSES.normalized.html"
+
           archive_name="utterpipe-pocket-tts-$GITHUB_REF_NAME-source"
           mkdir -p dist
           tar --exclude-vcs --exclude=target --exclude=dist \

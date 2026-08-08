@@ -78,10 +78,29 @@ jobs:
             echo "sherpa-onnx archive checksum mismatch" >&2
             exit 1
           }
+          tar -xjf "$archive" -C "$native_dir"
+          native_lib_dir="$(find "$native_dir" -mindepth 2 -maxdepth 2 -type d -name lib -print -quit)"
+          test -n "$native_lib_dir" || {
+            echo "sherpa-onnx archive has no library directory" >&2
+            exit 1
+          }
+          mkdir -p "$native_dir/excluded"
+          gpl_archive="$(find "$native_lib_dir" -maxdepth 1 -type f \( -name 'libespeak-ng.a' -o -name 'espeak-ng.lib' \) -print -quit)"
+          test -n "$gpl_archive" || {
+            echo "expected bundled eSpeak archive was not found" >&2
+            exit 1
+          }
+          mv "$gpl_archive" "$native_dir/excluded/"
+          unicode_archive="$(find "$native_lib_dir" -maxdepth 1 -type f \( -name 'libucd.a' -o -name 'ucd.lib' \) -print -quit)"
+          test -n "$unicode_archive" || {
+            echo "expected eSpeak Unicode-data archive was not found" >&2
+            exit 1
+          }
+          mv "$unicode_archive" "$native_dir/excluded/"
           if [[ "${{ runner.os }}" == "Windows" ]]; then
-            native_dir="$(cygpath -w "$native_dir")"
+            native_lib_dir="$(cygpath -w "$native_lib_dir")"
           fi
-          echo "SHERPA_ONNX_ARCHIVE_DIR=$native_dir" >> "$GITHUB_ENV"
+          echo "SHERPA_ONNX_LIB_DIR=$native_lib_dir" >> "$GITHUB_ENV"
 
       - run: cargo clippy --locked --all-targets --all-features -- -D warnings
       - run: cargo test --locked --all-targets

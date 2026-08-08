@@ -1,8 +1,35 @@
 # Third-party notices
 
-The provider binary statically links sherpa-onnx 1.13.4 and its native runtime.
-sherpa-onnx is Copyright (c) 2022-2026 Next-gen Kaldi contributors and is
-licensed under Apache-2.0: <https://github.com/k2-fsa/sherpa-onnx>.
+The provider is licensed under Apache-2.0. Its exact Rust dependency inventory,
+copyright notices, and license texts for all release targets are in
+[`THIRD_PARTY_LICENSES.html`](THIRD_PARTY_LICENSES.html). This includes the
+ISC/Apache/MIT/BSD notices incorporated by AWS-LC and the bzip2 notice. The
+provider reads each platform's native certificate store, so the current
+runtime graph does not distribute the separately licensed `webpki-roots` data.
+`Cargo.lock` and each release SBOM record the corresponding versions and
+checksums.
+
+## Native Pocket runtime
+
+The executable statically incorporates these pinned native components:
+
+- sherpa-onnx 1.13.4, Copyright (c) 2022-2026 Next-gen Kaldi contributors,
+  Apache-2.0,
+  <https://github.com/k2-fsa/sherpa-onnx/tree/v1.13.4>;
+- ONNX Runtime 1.27.0, MIT, including its complete upstream
+  [`native/ONNXRUNTIME_THIRD_PARTY_NOTICES.txt`](native/ONNXRUNTIME_THIRD_PARTY_NOTICES.txt);
+- kaldi-decoder 0.3.0, kaldifst, kaldi-native-fbank 1.22.3, OpenFST
+  1.8.5-2026-04-11, and simple-sentencepiece 0.7, Apache-2.0;
+- kissfft at `febd4ca`, BSD-3-Clause; and
+- piper-phonemize at `f3ff95a`, MIT.
+
+The upstream sherpa static archive also contains a GPL eSpeak NG library that
+Pocket TTS neither needs nor uses. The local `sherpa-pocket-runtime` binding
+does not issue a link directive for that archive. Three references retained by
+sherpa's generic multi-engine factory resolve to fail-closed Apache-2.0 shims,
+so no eSpeak implementation or data enters the distributed executable. Release
+testing links and runs the real Pocket model with both `libespeak-ng` and its
+`libucd` Unicode-data companion absent.
 
 The provider binary and source tree do not contain Pocket TTS model weights or
 reference recordings. The optional pinned converted model is downloaded and
@@ -22,3 +49,12 @@ policy, not legal advice.
 
 Imported voice references remain user-provided assets. The provider does not
 grant rights to a recording, speaker identity, or generated voice.
+
+Regenerate and compare the Rust report with cargo-about 0.9.1:
+
+```sh
+cargo about generate --locked --offline --fail --all-features \
+  about.hbs --output-file THIRD_PARTY_LICENSES.generated.html
+tr -d '\r' < THIRD_PARTY_LICENSES.generated.html > THIRD_PARTY_LICENSES.normalized.html
+cmp THIRD_PARTY_LICENSES.html THIRD_PARTY_LICENSES.normalized.html
+```

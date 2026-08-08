@@ -168,9 +168,11 @@ layout, network policy, and error mapping.
 
 ## Build
 
-Rust 1.88 or newer is required. The crate deliberately enables sherpa-onnx's
-`static` feature. Supply a pre-fetched native archive directory to Cargo so a
-release build never depends on an implicit build-time download:
+Rust 1.88 or newer is required. The repository's narrow Pocket-only runtime
+binding links the pinned sherpa-onnx native libraries without the unrelated
+eSpeak NG archive included in upstream's multi-engine bundle. Supply a
+pre-fetched native archive directory to Cargo so a release build never depends
+on an implicit build-time download:
 
 ```text
 SHERPA_ONNX_ARCHIVE_DIR=/absolute/sherpa-onnx-prebuilt cargo build --locked --release
@@ -204,8 +206,9 @@ absolute user-approved reference when performing an optional listening test.
 
 Tagged release archives contain the provider executable and its documentation,
 not the model or a voice. Each archive has a SHA-256 checksum; corresponding
-source and a CycloneDX SBOM are separate release assets. Artifacts are unsigned
-unless their release notes state otherwise.
+source and a CycloneDX SBOM are separate release assets. See the
+[third-party notices](THIRD_PARTY_NOTICES.md) and exact
+[release-integrity status](docs/release-integrity.md).
 
 ## Cancellation boundary
 

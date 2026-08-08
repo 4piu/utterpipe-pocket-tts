@@ -11,7 +11,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
-use sherpa_onnx::{
+use sherpa_pocket_runtime::{
     GenerationConfig, OfflineTts, OfflineTtsConfig, OfflineTtsModelConfig,
     OfflineTtsPocketModelConfig,
 };
@@ -119,9 +119,7 @@ impl PocketEngine {
                 num_threads: i32::try_from(options.num_threads)
                     .map_err(|_| EngineError::InvalidOptions)?,
                 debug: false,
-                ..Default::default()
             },
-            ..Default::default()
         };
         let tts = OfflineTts::create(&config).ok_or(EngineError::Unavailable)?;
         if tts.sample_rate() != SAMPLE_RATE as i32 {

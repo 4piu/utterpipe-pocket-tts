@@ -56,13 +56,18 @@ The engine integration is pinned to:
 - sherpa-onnx source tag `v1.13.4`, commit
   `142807252687d81b40d6315f23470a1512a00de3`:
   <https://github.com/k2-fsa/sherpa-onnx>;
-- `sherpa-onnx` Rust crate `=1.13.4`, statically linked;
+- sherpa-onnx's pinned C API and static native libraries, accessed through the
+  repository's narrow Pocket-only Rust binding;
 - converted model artifact
   `sherpa-onnx-pocket-tts-int8-2026-01-26.tar.bz2` from the sherpa-onnx
   `tts-models` release.
 
-The provider adapter is Apache-2.0. sherpa-onnx is Apache-2.0. These licenses do
-not determine the model or voice licenses.
+The provider adapter and sherpa-onnx are Apache-2.0. The upstream multi-engine
+static bundle includes an eSpeak NG archive, but Pocket does not use that
+frontend. Release builds physically exclude the GPL archive and resolve the
+generic factory's three retained eSpeak symbols with fail-closed Apache-2.0
+shims; real-model release tests run with the archive absent. These engine and
+adapter licenses do not determine the model or voice licenses.
 
 The converted archive contains a CC-BY-4.0 license, attributes the conversion
 to `KevinAHM/pocket-tts-onnx-export`, points to the upstream Pocket TTS terms,
@@ -109,11 +114,14 @@ imported voice data.
 
 Implementation language: Rust 2024 edition, minimum Rust 1.88.
 
-The provider calls the pinned sherpa-onnx Rust API and statically links its C++
-engine and ONNX Runtime archives. Release builds must never let the crate build
-script fetch native libraries implicitly: CI downloads the exact per-target
-archive, verifies a repository-pinned SHA-256 value, and supplies it through
-`SHERPA_ONNX_ARCHIVE_DIR` or builds equivalent pinned libraries from source.
+The provider calls the pinned sherpa-onnx C API through a narrow local safe
+binding and statically links its Pocket dependencies and ONNX Runtime archives.
+It deliberately excludes the unrelated eSpeak NG and Unicode-data archives.
+Release builds must never fetch native libraries implicitly: CI downloads the
+exact per-target archive, verifies a repository-pinned SHA-256 value, removes
+the excluded archive before Cargo runs, and supplies the remaining library
+directory through `SHERPA_ONNX_LIB_DIR`. Local builds may instead provide the
+verified original archive through `SHERPA_ONNX_ARCHIVE_DIR`.
 
 The verified `v1.13.4` static native archive SHA-256 values are:
 
@@ -487,14 +495,16 @@ provider roots. Debug logging is a direct CLI concern and remains redacted.
 
 ## 18. Packaging and release
 
-Each target release contains the executable, Apache-2.0 license, third-party
-notices, SBOM, SHA-256 checksum, and build provenance. Model and voice artifacts
-are never inside the release executable or archive.
+Each target archive contains the executable, Apache-2.0 license, third-party
+notices, and build documentation. Its SHA-256 checksum, corresponding source,
+and CycloneDX SBOM are separate release assets. Model and voice artifacts are
+never inside the release executable or archive.
 
 The lockfile pins all Rust dependencies. Native sherpa archives are pinned by
 version and checksum in release configuration, fetched before Cargo runs, and
-made available through the crate's local-archive build setting. CI rejects an
-unexpected build-time network fetch. Published targets run clean-machine
+made available through an explicit local-archive or local-library setting. CI
+removes the unused GPL archive and rejects its absence before that exclusion,
+so an upstream layout change fails closed. Published targets run clean-machine
 inference, protocol conformance, license-display, and dynamic-dependency checks.
 
 Provider binary upgrades preserve operational schema 1. Model upgrades use a
