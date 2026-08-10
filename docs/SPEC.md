@@ -618,11 +618,16 @@ requires:
   removal, crash-stale lease recovery, cache publication races, interrupted
   extraction, and independent roots;
 - clean shutdown, EOF, forced termination, stderr flooding, and engine panic;
-- per-target single-file dependency inspection plus cold/warm latency, real-time
-  factor, and peak-memory measurement;
+- per-target single-file dependency inspection; exact provider executable,
+  companion-library, compressed-package, and installed-runtime sizes; plus
+  cold/warm latency, real-time factor, peak/steady resident memory, accelerator
+  memory where applicable, and persistent-cache growth;
 - a short opt-in listening smoke test on each published platform.
 
-Subjective voice quality is reviewed, but it is not the only pass criterion.
+Subjective voice quality is reviewed against an intelligibility and severe-
+artifact floor, but maximum fidelity is not the primary pass criterion. Preserve
+user-selectable speed, memory, and quality profiles where the chosen runtime can
+offer them reliably.
 
 ## 20. Release gates
 
