@@ -71,11 +71,35 @@ cancellations were also accepted; median acknowledgement was 0.089 ms and
 terminal cleanup was 0.308 ms. These cancellation trials measure control and
 cleanup behavior, not voice quality.
 
+The same Pocket incremental workload was then built and exercised from isolated
+checkouts on the Windows and Linux development hosts. Both used the identical
+transferred model store and synthetic reference, two warmups, ten measurements,
+two inference threads, and two after-first-audio cancellation attempts.
+
+| Host | Initialize | First audio p50 / p95 | Completion p50 / p95 | RTF p50 / p95 | Steady / sampled-peak RSS | Executable |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Windows 11, Ryzen 7 9800X3D | 539 ms | 558 / 572 ms | 703 / 717 ms | 0.1373 / 0.1400 | 628.06 / 628.07 MB | 24.06 MB |
+| Manjaro Linux, Core i9-12900K | 571 ms | 666 / 678 ms | 779 / 792 ms | 0.2212 / 0.2250 | 603.76 / 603.76 MB | 35.51 MB |
+
+Both hosts completed real incremental synthesis and accepted both cancellation
+requests without emitting audio after acknowledgement. Median acknowledgement /
+terminal-cleanup latency was 0.101 / 46.9 ms on Windows and 0.179 / 58.2 ms on
+Linux. Provider data remained 198.55 MB, the removable archive cache remained
+98.34 MB, and neither store grew during measurement.
+
+The seeded output was stable across all ten iterations on each host, but it was
+not bit-identical across hosts. The same text and reference produced 5.20 seconds
+on macOS, 5.12 seconds on Windows, and 3.52 seconds on Linux, with different PCM
+hashes. Do not promise cross-platform acoustic reproducibility for the current
+sherpa backend. The synthetic reference establishes runtime and protocol
+behavior only; intelligibility and severe-artifact screening still require a
+consented natural reference and listening evaluation.
+
 ## Candidate set
 
 | Runtime | Role in evaluation | Three-platform evidence | Deployment concern |
 | --- | --- | --- | --- |
-| Current sherpa-onnx 1.13.4 | Released CPU baseline | Upstream explicitly supports Windows, macOS, and Linux; current provider artifacts still require real synthesis verification on each target | Proven static cross-platform integration |
+| Current sherpa-onnx 1.13.4 | Released CPU baseline | Real incremental synthesis and cancellation now pass on Windows, macOS, and Linux | Proven static cross-platform integration; output is not acoustically reproducible across hosts |
 | `audio.cpp` Pocket implementation | Native candidate | Documents native Windows, macOS, and Linux builds | Large fast-moving multi-model GGML runtime; evaluate a Pocket-only composite build |
 | `PocketTTS.cpp` | Compact native candidate | Documents Windows, macOS, and Linux CMake builds | Attractive C FFI and streaming surface, but model-generation coverage must be proven after engine selection |
 

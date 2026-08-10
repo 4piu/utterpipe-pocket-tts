@@ -38,7 +38,7 @@ impl fmt::Display for DirectStorageError {
 enum Platform {
     #[cfg(any(test, windows))]
     Windows,
-    #[cfg(any(test, target_os = "macos"))]
+    #[cfg(any(target_os = "macos", all(test, unix)))]
     MacOs,
     #[cfg(any(test, all(unix, not(target_os = "macos"))))]
     Unix,
@@ -91,7 +91,7 @@ fn default_root(
                 RootKind::Cache => provider.join("cache"),
             }
         }
-        #[cfg(any(test, target_os = "macos"))]
+        #[cfg(any(target_os = "macos", all(test, unix)))]
         Platform::MacOs => {
             let home = required_absolute(environment("HOME")).ok_or_else(unavailable)?;
             match kind {
@@ -164,6 +164,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn linux_uses_absolute_xdg_roots() {
         let paths = resolve_with(
             None,
@@ -187,6 +188,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn linux_falls_back_to_home_when_xdg_roots_are_unset() {
         let paths = resolve_with(
             None,
@@ -206,6 +208,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn macos_uses_application_support_and_cache_roots() {
         let paths = resolve_with(
             None,
@@ -227,15 +230,16 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
     fn windows_keeps_data_and_cache_as_siblings() {
         let paths = resolve_with(
             None,
             None,
             Platform::Windows,
-            environment(&[("LOCALAPPDATA", "/Users/test/AppData/Local")]),
+            environment(&[("LOCALAPPDATA", r"C:\Users\test\AppData\Local")]),
         )
         .unwrap();
-        let provider = Path::new("/Users/test/AppData/Local/UtterPipe/providers/pocket-tts");
+        let provider = Path::new(r"C:\Users\test\AppData\Local\UtterPipe\providers\pocket-tts");
         assert_eq!(paths.data_dir, provider.join("data"));
         assert_eq!(paths.cache_dir, provider.join("cache"));
     }
@@ -254,6 +258,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn one_explicit_root_only_resolves_the_missing_root() {
         let paths = resolve_with(
             Some(PathBuf::from("/explicit/data")),
