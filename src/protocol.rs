@@ -26,7 +26,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     PROVIDER_NAME, PROVIDER_SLUG, PROVIDER_VENDOR, PROVIDER_VERSION,
-    audio::pcm16_wav_bytes,
+    audio::{MAX_RIFF_REFERENCE_BYTES, pcm16_wav_bytes},
     config::{
         ProviderOptions, UtteranceOptions, management_options_schema, provider_options_schema,
         utterance_options_schema,
@@ -1230,7 +1230,7 @@ fn hello(value: &Value) -> Result<(Session, Value), WireError> {
                 {"id":"voices", "name":"Voices", "description":"Imported consented reference voices usable by Pocket TTS.", "item_kind":"voice", "patchable_provider_options":["voice"], "patchable_utterance_options":[]}
             ],
             "import_kinds":[
-                {"id":"voice", "name":"Voice reference", "media_types":["audio/wav"], "max_source_bytes":5_242_880, "patchable_provider_options":["voice"], "patchable_utterance_options":[]}
+                {"id":"voice", "name":"Voice reference", "media_types":["audio/wav"], "max_source_bytes":MAX_RIFF_REFERENCE_BYTES, "patchable_provider_options":["voice"], "patchable_utterance_options":[]}
             ]
         }),
     ))
@@ -1323,12 +1323,19 @@ fn voice_catalog_items(scope: &str, state: &ManagementState) -> Result<Vec<Value
         .map_err(store_error)
         .map(|mut voices| {
             for voice in &mut voices {
+                let curated = voice["kind"] == "curated";
                 if let Some(object) = voice.as_object_mut() {
                     object.remove("kind");
                 }
                 let id = voice["id"].clone();
-                voice["description"] =
-                    Value::String("User-imported Pocket TTS reference voice.".into());
+                voice["description"] = Value::String(
+                    if curated {
+                        "Verified curated Pocket TTS reference voice."
+                    } else {
+                        "User-imported Pocket TTS reference voice."
+                    }
+                    .into(),
+                );
                 voice["provider_options_patch"] = json!({"voice":id});
                 voice["utterance_options_patch"] = json!({});
                 voice["artifacts"] = json!([format!(
@@ -1510,7 +1517,6 @@ async fn download_archive(
     });
     let client = reqwest::Client::builder()
         .tls_backend_rustls()
-        .no_proxy()
         .redirect(redirect)
         .connect_timeout(Duration::from_secs(30))
         .build()
@@ -1703,10 +1709,10 @@ fn start_asset_import(
     let mutation = store.begin_mutation().map_err(store_error)?;
     let source_bytes = std::fs::symlink_metadata(&source)
         .map_err(|_| WireError::new("resource_missing", "voice source is unavailable"))?;
-    if !source_bytes.file_type().is_file() || source_bytes.len() > 5_242_880 {
+    if !source_bytes.file_type().is_file() || source_bytes.len() > MAX_RIFF_REFERENCE_BYTES {
         return Err(WireError::new(
             "invalid_message",
-            "voice source must be a regular file no larger than 5 MiB",
+            "voice source must be a regular classic RIFF/WAVE file",
         ));
     }
     let cancellation = CancellationToken::new();

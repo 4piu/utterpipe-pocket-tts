@@ -44,6 +44,19 @@ pub struct MutationGuard {
     _lock: File,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct VoiceProvenance {
+    pub kind: String,
+    pub name: String,
+    pub source_url: String,
+    pub repository: String,
+    pub revision: String,
+    pub path: String,
+    pub license_id: String,
+    pub license_url: String,
+    pub attribution: String,
+}
+
 #[derive(Debug, Error)]
 pub enum StoreError {
     #[error("provider storage paths are invalid")]
@@ -102,6 +115,8 @@ struct VoiceMetadata {
     imported_unix_seconds: u64,
     consent_confirmed: bool,
     normalized_wav_sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    provenance: Option<VoiceProvenance>,
 }
 
 impl Store {
@@ -195,18 +210,41 @@ impl Store {
                 Err(error) => return Err(error),
             };
             let metadata = read_voice_metadata(&entry.path().join("versions").join(version))?;
-            voices.push(json!({
-                "id": metadata.voice_id,
-                "name": metadata.voice_id,
-                "status": "installed",
-                "kind": "imported",
-                "languages": [],
-                "license": {
-                    "id": "user-provided-reference",
-                    "url": "https://github.com/4piu/utterpipe-pocket-tts#voice-provenance-and-consent",
-                    "requires_acceptance": false
-                }
-            }));
+            let descriptor = if let Some(provenance) = metadata.provenance {
+                json!({
+                    "id": metadata.voice_id,
+                    "name": provenance.name,
+                    "status": "installed",
+                    "kind": provenance.kind,
+                    "languages": ["en"],
+                    "license": {
+                        "id": provenance.license_id,
+                        "url": provenance.license_url,
+                        "requires_acceptance": false
+                    },
+                    "source": {
+                        "url": provenance.source_url,
+                        "repository": provenance.repository,
+                        "revision": provenance.revision,
+                        "path": provenance.path,
+                        "attribution": provenance.attribution
+                    }
+                })
+            } else {
+                json!({
+                    "id": metadata.voice_id,
+                    "name": metadata.voice_id,
+                    "status": "installed",
+                    "kind": "imported",
+                    "languages": [],
+                    "license": {
+                        "id": "user-provided-reference",
+                        "url": "https://github.com/4piu/utterpipe-pocket-tts#voice-provenance-and-consent",
+                        "requires_acceptance": false
+                    }
+                })
+            };
+            voices.push(descriptor);
         }
         voices.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
         Ok(voices)
@@ -380,37 +418,30 @@ impl Store {
             return Err(StoreError::InvalidVoiceId);
         }
         let mutation = self.begin_mutation()?;
-        self.import_voice_inner(
-            source,
-            voice_id,
-            consent_confirmed,
-            maximum_seconds,
-            &mutation,
-            || false,
-        )
+        self.import_voice_inner(source, voice_id, maximum_seconds, &mutation, None, || false)
     }
 
     fn import_voice_inner<F>(
         &self,
         source: &Path,
         voice_id: &str,
-        consent_confirmed: bool,
         maximum_seconds: f64,
         _mutation: &MutationGuard,
+        provenance: Option<VoiceProvenance>,
         cancelled: F,
     ) -> Result<(), StoreError>
     where
         F: Fn() -> bool,
     {
-        if !consent_confirmed {
-            return Err(StoreError::ConsentRequired);
-        }
         if !source.is_absolute() || !valid_voice_id(voice_id) {
             return Err(StoreError::InvalidVoiceId);
         }
         check_cancelled(&cancelled)?;
-        let reference =
-            audio::read_reference(source, maximum_seconds).map_err(|_| StoreError::InvalidAudio)?;
+        let reference = audio::read_reference_cancelled(source, maximum_seconds, &cancelled)
+            .map_err(|error| match error {
+                audio::AudioError::Cancelled => StoreError::Cancelled,
+                _ => StoreError::InvalidAudio,
+            })?;
         check_cancelled(&cancelled)?;
         self.initialize_schema()?;
         let root = self.data_dir.join("voices").join(voice_id);
@@ -453,6 +484,7 @@ impl Store {
                         .as_secs(),
                     consent_confirmed: true,
                     normalized_wav_sha256,
+                    provenance,
                 };
                 write_json_synced(&staging.join("metadata.json"), &metadata)?;
                 File::create(staging.join("lease.lock"))
@@ -497,12 +529,42 @@ impl Store {
         if !source.is_absolute() || !valid_voice_id(voice_id) {
             return Err(StoreError::InvalidVoiceId);
         }
+        self.import_voice_inner(source, voice_id, maximum_seconds, mutation, None, cancelled)
+    }
+
+    /// Import a voice with verified curated-source provenance while a
+    /// caller-owned mutation lease is held.
+    ///
+    /// # Errors
+    ///
+    /// Returns a consent, identifier, audio, conflict, schema, cancellation,
+    /// locking, or I/O error.
+    #[allow(clippy::too_many_arguments)]
+    pub fn import_curated_voice_locked<F>(
+        &self,
+        source: &Path,
+        voice_id: &str,
+        consent_confirmed: bool,
+        maximum_seconds: f64,
+        mutation: &MutationGuard,
+        provenance: VoiceProvenance,
+        cancelled: F,
+    ) -> Result<(), StoreError>
+    where
+        F: Fn() -> bool,
+    {
+        if !consent_confirmed {
+            return Err(StoreError::ConsentRequired);
+        }
+        if !source.is_absolute() || !valid_voice_id(voice_id) {
+            return Err(StoreError::InvalidVoiceId);
+        }
         self.import_voice_inner(
             source,
             voice_id,
-            consent_confirmed,
             maximum_seconds,
             mutation,
+            Some(provenance),
             cancelled,
         )
     }
@@ -791,10 +853,28 @@ fn read_voice_metadata(path: &Path) -> Result<VoiceMetadata, StoreError> {
     let bytes = fs::read(path.join("metadata.json")).map_err(|_| StoreError::Integrity)?;
     let metadata: VoiceMetadata =
         serde_json::from_slice(&bytes).map_err(|_| StoreError::Integrity)?;
-    if metadata.schema_version != SCHEMA_VERSION {
+    if metadata.schema_version != SCHEMA_VERSION || !valid_voice_provenance(&metadata) {
         return Err(StoreError::Integrity);
     }
     Ok(metadata)
+}
+
+fn valid_voice_provenance(metadata: &VoiceMetadata) -> bool {
+    let Some(provenance) = metadata.provenance.as_ref() else {
+        return true;
+    };
+    crate::voice::CURATED_VOICES.iter().any(|voice| {
+        provenance.kind == "curated"
+            && provenance.name == voice.name
+            && provenance.source_url == crate::voice::curated_download_url(voice).as_str()
+            && provenance.repository == voice.repository
+            && provenance.revision == voice.revision
+            && provenance.path == voice.path
+            && provenance.license_id == voice.license_id
+            && provenance.license_url == voice.license_url
+            && provenance.attribution == voice.attribution
+            && metadata.source_sha256 == voice.sha256
+    })
 }
 
 fn verify_voice_dir(path: &Path, expected_voice_id: &str) -> Result<(), StoreError> {
@@ -1102,6 +1182,58 @@ mod tests {
         );
         let normalized = audio::read_reference(&voice_dir.join("reference.wav"), 30.0).unwrap();
         assert_eq!(normalized.samples_sha256, metadata.samples_sha256);
+    }
+
+    #[test]
+    fn curated_voice_catalog_preserves_verified_provenance() {
+        let (temp, store) = test_store();
+        let source = temp.path().join("curated.wav");
+        reference_with_extra_chunk(&source, 100);
+        let curated = &crate::voice::CURATED_VOICES[0];
+        let mutation = store.begin_mutation().unwrap();
+        store
+            .import_curated_voice_locked(
+                &source,
+                "curated",
+                true,
+                30.0,
+                &mutation,
+                VoiceProvenance {
+                    kind: "curated".to_owned(),
+                    name: curated.name.to_owned(),
+                    source_url: crate::voice::curated_download_url(curated).to_string(),
+                    repository: curated.repository.to_owned(),
+                    revision: curated.revision.to_owned(),
+                    path: curated.path.to_owned(),
+                    license_id: curated.license_id.to_owned(),
+                    license_url: curated.license_url.to_owned(),
+                    attribution: curated.attribution.to_owned(),
+                },
+                || false,
+            )
+            .unwrap();
+        drop(mutation);
+
+        // The real curated downloader has already verified this source hash.
+        // This unit fixture uses generated audio, so align its stored source
+        // identity with the manifest before exercising catalog validation.
+        let root = temp.path().join("data/voices/curated");
+        let metadata_path = root
+            .join("versions")
+            .join(read_active(&root).unwrap())
+            .join("metadata.json");
+        let mut metadata: VoiceMetadata =
+            serde_json::from_slice(&fs::read(&metadata_path).unwrap()).unwrap();
+        metadata.source_sha256 = curated.sha256.to_owned();
+        let mut metadata_bytes = serde_json::to_vec_pretty(&metadata).unwrap();
+        metadata_bytes.push(b'\n');
+        fs::write(&metadata_path, metadata_bytes).unwrap();
+
+        let voice = store.voice_catalog().unwrap().remove(0);
+        assert_eq!(voice["kind"], "curated");
+        assert_eq!(voice["name"], curated.name);
+        assert_eq!(voice["license"]["id"], "cc0-1.0");
+        assert_eq!(voice["source"]["attribution"], curated.attribution);
     }
 
     #[test]

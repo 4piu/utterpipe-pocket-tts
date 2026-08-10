@@ -32,13 +32,15 @@ testing links and runs the real Pocket model with both `libespeak-ng` and its
 `libucd` Unicode-data companion absent.
 
 The provider binary and source tree do not contain Pocket TTS model weights or
-reference recordings. The optional pinned converted model is downloaded and
-stored separately. Its archive identifies these sources and conditions:
+reference recordings. The optional pinned converted model and any explicitly
+selected voice are downloaded and stored separately. Their upstream sources
+and conditions include:
 
 - Pocket TTS: <https://github.com/kyutai-labs/pocket-tts>
 - Model card and acceptable-use conditions: <https://huggingface.co/kyutai/pocket-tts>
 - Optional reference-voice repository: <https://huggingface.co/kyutai/tts-voices>
-  (recording licenses and attribution requirements vary by collection)
+  (recording licenses and attribution requirements vary by collection; the
+  provider's pinned Voice-Zero subset is identified as CC0 by Kyutai)
 - ONNX conversion: <https://github.com/KevinAHM/pocket-tts-onnx-export>
 - Converted archive license: CC-BY-4.0
 - Converted archive README notice: “It is for non-commercial.”
@@ -49,8 +51,10 @@ acceptance of `pocket-tts-cc-by-4.0`, `pocket-tts-acceptable-use`, and
 the most restrictive disclosed interpretation. This is a conservative product
 policy, not legal advice.
 
-Imported voice references remain user-provided assets. The provider does not
-grant rights to a recording, speaker identity, or generated voice.
+Imported voice references remain separate assets. Curated metadata preserves
+its upstream license and attribution; arbitrary imports remain user-provided.
+The provider does not grant rights to a recording, speaker identity, or
+generated voice.
 
 Regenerate and compare the Rust report with cargo-about 0.9.1:
 

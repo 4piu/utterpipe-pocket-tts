@@ -1,6 +1,7 @@
 use std::io::{self, BufRead, IsTerminal, Write};
 
 use utterpipe_pocket_tts::model::LICENSE_IDS;
+use utterpipe_pocket_tts::voice::CURATED_LICENSE_ID;
 
 const PREPARE_CONFIRMATION_REQUIRED: &str = "preparation requires --yes after reviewing the plan";
 const LICENSE_ACCEPTANCE_REQUIRED: &str = "all three disclosure IDs must be supplied with --accept";
@@ -17,6 +18,12 @@ pub(crate) fn prepare(accepted: &mut Vec<String>, yes: bool) -> Result<(), Strin
 pub(crate) fn voice_import(consent_confirmed: bool) -> Result<bool, String> {
     with_terminal(|input, output, interactive| {
         voice_import_with(input, output, interactive, consent_confirmed)
+    })
+}
+
+pub(crate) fn curated_voice_install(accepted: &mut Vec<String>, yes: bool) -> Result<(), String> {
+    with_terminal(|input, output, interactive| {
+        curated_voice_install_with(input, output, interactive, accepted, yes)
     })
 }
 
@@ -94,6 +101,47 @@ fn voice_import_with(
     } else {
         Err("voice consent confirmation declined".to_owned())
     }
+}
+
+fn curated_voice_install_with(
+    input: &mut dyn BufRead,
+    output: &mut dyn Write,
+    interactive: bool,
+    accepted: &mut Vec<String>,
+    yes: bool,
+) -> Result<(), String> {
+    if !yes && !interactive {
+        return Err(
+            "curated voice installation requires --yes after reviewing the plan".to_owned(),
+        );
+    }
+    if !accepted.iter().any(|value| value == CURATED_LICENSE_ID) {
+        if !interactive {
+            return Err(format!(
+                "curated voice installation requires --accept {CURATED_LICENSE_ID}"
+            ));
+        }
+        if !confirm(
+            input,
+            output,
+            &format!(
+                "Acknowledge upstream license '{CURATED_LICENSE_ID}' and confirm permitted, consented use? [y/N] "
+            ),
+        )? {
+            return Err("curated voice license acknowledgement declined".to_owned());
+        }
+        accepted.push(CURATED_LICENSE_ID.to_owned());
+    }
+    if !yes
+        && !confirm(
+            input,
+            output,
+            "Download and install this curated voice? [y/N] ",
+        )?
+    {
+        return Err("curated voice installation cancelled".to_owned());
+    }
+    Ok(())
 }
 
 fn removal_with(
@@ -233,5 +281,28 @@ mod tests {
                 .unwrap()
                 .contains("Remove voice:sample?")
         );
+    }
+
+    #[test]
+    fn curated_voice_install_collects_license_and_confirmation_interactively() {
+        let mut accepted = Vec::new();
+        let mut input = Cursor::new(b"yes\ny\n");
+        let mut output = Vec::new();
+
+        curated_voice_install_with(&mut input, &mut output, true, &mut accepted, false).unwrap();
+
+        assert_eq!(accepted, [CURATED_LICENSE_ID]);
+        let prompts = String::from_utf8(output).unwrap();
+        assert!(prompts.contains("confirm permitted, consented use"));
+        assert!(prompts.contains("Download and install"));
+    }
+
+    #[test]
+    fn curated_voice_install_flags_are_explicit_for_automation() {
+        let mut accepted = vec![CURATED_LICENSE_ID.to_owned()];
+        let mut input = Cursor::new(Vec::<u8>::new());
+        let mut output = Vec::new();
+        curated_voice_install_with(&mut input, &mut output, false, &mut accepted, true).unwrap();
+        assert!(output.is_empty());
     }
 }

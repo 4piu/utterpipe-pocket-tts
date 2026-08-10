@@ -87,3 +87,31 @@ fn piped_yes_does_not_authorize_voice_import() {
     assert!(!data.exists());
     assert!(!cache.exists());
 }
+
+#[test]
+fn piped_yes_does_not_authorize_curated_voice_download() {
+    let temp = tempfile::tempdir().unwrap();
+    let data = temp.path().join("data");
+    let cache = temp.path().join("cache");
+    let storage = storage_arguments(&data, &cache);
+    let arguments = [
+        "voices",
+        "install",
+        "voice-zero-caro-davy",
+        storage[0].as_str(),
+        storage[1].as_str(),
+        storage[2].as_str(),
+        storage[3].as_str(),
+    ];
+
+    let output = run_with_piped_yes(&arguments);
+
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("requires --yes")
+    );
+    assert!(!data.exists());
+    assert!(!cache.exists());
+}

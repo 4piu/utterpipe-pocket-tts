@@ -45,13 +45,20 @@ For a person using a terminal, the shortest setup is:
 
 ```text
 utterpipe-pocket-tts models prepare
-utterpipe-pocket-tts voices import /absolute/reference.wav --id my-voice
+utterpipe-pocket-tts voices available
+utterpipe-pocket-tts voices install voice-zero-caro-davy
 utterpipe-pocket-tts doctor
 ```
 
 Preparation prints all model terms, prompts for each required acknowledgement,
 and confirms the download. Voice import prompts for rights and consent. Every
 prompt defaults to no.
+
+The pinned catalog is stored in the executable and listing it is offline. A
+human may alternatively import a relative/absolute path or an explicit HTTP(S)
+URL with `voices import <SOURCE> --id <id>`. Both routes use the same strict,
+streaming WAV importer. Network commands honor system proxy settings and
+standard proxy environment variables, including `NO_PROXY`.
 
 Interactive authorization is available only when stdin, stdout, and stderr are
 terminals. Redirected or piped commands never treat input as authorization.
@@ -65,6 +72,7 @@ utterpipe-pocket-tts doctor [--data-dir <path>] [--cache-dir <path>]
 utterpipe-pocket-tts models list [--data-dir <path>] [--cache-dir <path>]
 utterpipe-pocket-tts models remove <model-id> [--data-dir <path>] [--cache-dir <path>]
 utterpipe-pocket-tts voices list [--data-dir <path>] [--cache-dir <path>]
+utterpipe-pocket-tts voices available [--data-dir <path>] [--cache-dir <path>]
 utterpipe-pocket-tts voices remove <voice-id> [--data-dir <path>] [--cache-dir <path>]
 utterpipe-pocket-tts protocol --stdio
 ```
@@ -94,6 +102,8 @@ likewise require explicit confirmation:
 ```text
 utterpipe-pocket-tts voices import /absolute/reference.wav --id my-voice \
   --consent-confirmed
+utterpipe-pocket-tts voices install voice-zero-caro-davy \
+  --accept cc0-1.0 --yes
 utterpipe-pocket-tts models remove pocket-tts-int8-2026-01-26 --yes
 utterpipe-pocket-tts voices remove my-voice --yes
 ```
@@ -154,7 +164,16 @@ all necessary permissions, privacy rights, publicity rights, and applicable
 acceptable-use rules.
 
 The provider stores a normalized local WAV plus hashes and technical metadata;
-it does not retain the original source path.
+it does not retain the original path or arbitrary URL. For curated downloads it
+does retain the public pinned repository, revision, path, license, and
+attribution so installed catalogs continue to disclose provenance.
+
+The direct importer accepts classic RIFF/WAVE files without an arbitrary total
+byte ceiling. It emits a warning above 5 MiB, streams downloads, hashing, and
+RIFF metadata with bounded memory, and checks cancellation between chunks. The
+accepted PCM data remains bounded by the mono PCM16, 16–48 kHz, 1–30 second
+audio rules. Temporary downloads are private and removed after success,
+failure, timeout, or cancellation.
 
 ## Build and test
 

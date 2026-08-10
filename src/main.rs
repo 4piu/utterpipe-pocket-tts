@@ -1,4 +1,8 @@
-use std::{io::Write, path::PathBuf};
+use std::{
+    ffi::OsString,
+    io::Write,
+    path::{Path, PathBuf},
+};
 
 use clap::{Args, Parser, Subcommand};
 use utterpipe_pocket_tts::{
@@ -6,7 +10,11 @@ use utterpipe_pocket_tts::{
     direct_storage::resolve_direct_storage,
     model::{MODEL_ID, licenses, model_descriptor},
     protocol,
-    store::Store,
+    store::{Store, VoiceProvenance},
+    voice::{
+        CURATED_LICENSE_ID, CURATED_LICENSE_NAME, CURATED_LICENSE_URL, CURATED_VOICES,
+        ExpectedDownload, VoiceSource, curated_download_url, curated_voice_by_id, download_voice,
+    },
 };
 
 mod cli_confirm;
@@ -29,7 +37,7 @@ enum Command {
         #[command(subcommand)]
         command: ModelCommand,
     },
-    /// Inspect, import, or remove user-provided reference voices.
+    /// Inspect, install, import, or remove reference voices.
     Voices {
         #[command(subcommand)]
         command: VoiceCommand,
@@ -78,20 +86,45 @@ enum ModelCommand {
 
 #[derive(Subcommand)]
 enum VoiceCommand {
+    /// List voices already imported into provider storage.
     List(Storage),
+    /// List the small, pinned catalog available for verified download.
+    Available(Storage),
+    /// Download and import one voice from the pinned catalog.
+    Install {
+        /// ID reported by `voices available`.
+        catalog_id: String,
+        /// Override the installed voice ID.
+        #[arg(long)]
+        id: Option<String>,
+        /// Required upstream license ID.
+        #[arg(long = "accept")]
+        accepted: Vec<String>,
+        /// Confirm the displayed plan.
+        #[arg(long)]
+        yes: bool,
+        #[command(flatten)]
+        storage: Storage,
+    },
+    /// Import a local path or an explicit HTTP(S) URL.
     Import {
-        wav: PathBuf,
+        /// Relative/absolute file path or explicit HTTP(S) URL.
+        source: OsString,
+        /// Installed voice ID.
         #[arg(long)]
         id: String,
+        /// Confirm permitted, consented use without an interactive prompt.
         #[arg(long)]
         consent_confirmed: bool,
         #[command(flatten)]
         storage: Storage,
     },
     Remove {
+        /// Installed voice ID.
         id: String,
         #[command(flatten)]
         storage: Storage,
+        /// Confirm removal without an interactive prompt.
         #[arg(long)]
         yes: bool,
     },
@@ -198,17 +231,125 @@ async fn run() -> Result<(), String> {
                 }
                 Ok(())
             }
+            VoiceCommand::Available(storage) => {
+                let installed = store(storage)?
+                    .voice_catalog()
+                    .map_err(public_store_error)?;
+                for voice in CURATED_VOICES {
+                    let is_installed = installed.iter().any(|item| {
+                        item["id"] == voice.id
+                            || (item["source"]["repository"] == voice.repository
+                                && item["source"]["revision"] == voice.revision
+                                && item["source"]["path"] == voice.path)
+                    });
+                    let mut descriptor = serde_json::to_value(voice)
+                        .map_err(|_| "could not encode curated voice descriptor".to_owned())?;
+                    descriptor["status"] = if is_installed {
+                        serde_json::Value::String("installed".to_owned())
+                    } else {
+                        serde_json::Value::String("available".to_owned())
+                    };
+                    println!(
+                        "{}",
+                        serde_json::to_string(&descriptor)
+                            .map_err(|_| "could not encode curated voice descriptor".to_owned())?
+                    );
+                }
+                Ok(())
+            }
+            VoiceCommand::Install {
+                catalog_id,
+                id,
+                mut accepted,
+                yes,
+                storage,
+            } => {
+                let voice = curated_voice_by_id(&catalog_id)
+                    .ok_or_else(|| "unknown curated voice ID".to_owned())?;
+                let id = id.unwrap_or_else(|| voice.id.to_owned());
+                println!("Plan: download and import voice:{id}");
+                println!("Catalog voice: {} ({})", voice.name, voice.id);
+                println!(
+                    "Source: https://huggingface.co/{}/blob/{}/{}",
+                    voice.repository, voice.revision, voice.path
+                );
+                println!("Attribution: {}", voice.attribution);
+                println!(
+                    "License: {CURATED_LICENSE_NAME} ({CURATED_LICENSE_ID}) {CURATED_LICENSE_URL}"
+                );
+                cli_confirm::curated_voice_install(&mut accepted, yes)?;
+                let store = store(storage)?;
+                let cancellation = cancellation_on_ctrl_c();
+                let staged = download_voice(
+                    curated_download_url(voice),
+                    store.cache_dir(),
+                    Some(ExpectedDownload {
+                        bytes: voice.bytes,
+                        sha256: voice.sha256,
+                    }),
+                    cancellation.clone(),
+                    warn_large_input,
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+                let provenance = VoiceProvenance {
+                    kind: "curated".to_owned(),
+                    name: voice.name.to_owned(),
+                    source_url: curated_download_url(voice).to_string(),
+                    repository: voice.repository.to_owned(),
+                    revision: voice.revision.to_owned(),
+                    path: voice.path.to_owned(),
+                    license_id: voice.license_id.to_owned(),
+                    license_url: voice.license_url.to_owned(),
+                    attribution: voice.attribution.to_owned(),
+                };
+                import_voice_path(
+                    store,
+                    staged.path().to_owned(),
+                    id.clone(),
+                    Some(provenance),
+                    cancellation,
+                )
+                .await?;
+                println!("installed: voice:{id}");
+                Ok(())
+            }
             VoiceCommand::Import {
-                wav,
+                source,
                 id,
                 consent_confirmed,
                 storage,
             } => {
                 println!("Plan: normalize and import voice:{id}");
-                let consent_confirmed = cli_confirm::voice_import(consent_confirmed)?;
-                store(storage)?
-                    .import_voice(&wav, &id, consent_confirmed, 30.0)
-                    .map_err(public_store_error)?;
+                cli_confirm::voice_import(consent_confirmed)?;
+                let store = store(storage)?;
+                let cancellation = cancellation_on_ctrl_c();
+                match VoiceSource::parse(source).map_err(|error| error.to_string())? {
+                    VoiceSource::File(path) => {
+                        let path = absolute_path(path)?;
+                        warn_large_local_file(&path);
+                        import_voice_path(store, path, id.clone(), None, cancellation).await?;
+                    }
+                    VoiceSource::Url(url) => {
+                        let staged = download_voice(
+                            url,
+                            store.cache_dir(),
+                            None,
+                            cancellation.clone(),
+                            warn_large_input,
+                        )
+                        .await
+                        .map_err(|error| error.to_string())?;
+                        import_voice_path(
+                            store,
+                            staged.path().to_owned(),
+                            id.clone(),
+                            None,
+                            cancellation,
+                        )
+                        .await?;
+                    }
+                }
                 println!("installed: voice:{id}");
                 Ok(())
             }
@@ -240,4 +381,72 @@ fn store(storage: Storage) -> Result<Store, String> {
 
 fn public_store_error(error: impl std::fmt::Display) -> String {
     error.to_string()
+}
+
+fn absolute_path(path: PathBuf) -> Result<PathBuf, String> {
+    if path.is_absolute() {
+        Ok(path)
+    } else {
+        std::env::current_dir()
+            .map(|directory| directory.join(path))
+            .map_err(|_| "could not resolve the voice source path".to_owned())
+    }
+}
+
+fn warn_large_local_file(path: &Path) {
+    if let Ok(metadata) = std::fs::symlink_metadata(path)
+        && metadata.len() > utterpipe_pocket_tts::audio::LARGE_REFERENCE_WARNING_BYTES
+    {
+        warn_large_input(metadata.len());
+    }
+}
+
+fn warn_large_input(bytes: u64) {
+    eprintln!(
+        "warning: voice source is unusually large ({} bytes); import will continue and remains cancellable",
+        bytes
+    );
+}
+
+fn cancellation_on_ctrl_c() -> tokio_util::sync::CancellationToken {
+    let cancellation = tokio_util::sync::CancellationToken::new();
+    let signal = cancellation.clone();
+    tokio::spawn(async move {
+        if tokio::signal::ctrl_c().await.is_ok() {
+            signal.cancel();
+        }
+    });
+    cancellation
+}
+
+async fn import_voice_path(
+    store: Store,
+    path: PathBuf,
+    id: String,
+    provenance: Option<VoiceProvenance>,
+    cancellation: tokio_util::sync::CancellationToken,
+) -> Result<(), String> {
+    let mutation = store.begin_mutation().map_err(public_store_error)?;
+    let task_cancellation = cancellation.clone();
+    let mut task = tokio::task::spawn_blocking(move || {
+        if let Some(provenance) = provenance {
+            store.import_curated_voice_locked(&path, &id, true, 30.0, &mutation, provenance, || {
+                task_cancellation.is_cancelled()
+            })
+        } else {
+            store.import_voice_locked(&path, &id, true, 30.0, &mutation, || {
+                task_cancellation.is_cancelled()
+            })
+        }
+    });
+    tokio::select! {
+        result = &mut task => result
+            .map_err(|_| "voice import worker failed".to_owned())?
+            .map_err(public_store_error),
+        () = cancellation.cancelled() => {
+            task.await
+                .map_err(|_| "voice import worker failed".to_owned())?
+                .map_err(public_store_error)
+        }
+    }
 }

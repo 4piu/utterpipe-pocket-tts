@@ -39,7 +39,7 @@ Non-goals:
 
 - bundling model weights or voice recordings in the provider executable;
 - silently downloading a model during initialization or first synthesis;
-- a provider-curated downloadable voice catalog in version 0.1;
+- live discovery or automatic trust of the complete upstream voice repository;
 - training, fine-tuning, recording, microphone capture, or voice cleanup;
 - SSML, expression tags, GPU inference, or remote inference;
 - accepting arbitrary ONNX graphs or model directories;
@@ -55,7 +55,7 @@ The engine integration is pinned to:
   <https://huggingface.co/kyutai/pocket-tts>;
 - optional upstream reference recordings:
   <https://huggingface.co/kyutai/tts-voices> (licenses and attribution vary by
-  collection; version 0.1 does not fetch them);
+  collection; the provider curates only explicitly pinned entries);
 - sherpa-onnx source tag `v1.13.4`, commit
   `142807252687d81b40d6315f23470a1512a00de3`:
   <https://github.com/k2-fsa/sherpa-onnx>;
@@ -90,9 +90,11 @@ future model revision may remove or change this restriction only after its
 artifact provenance and terms are independently verified and assigned a new
 model ID.
 
-Version 0.1 does not download voices. An imported reference remains the user's
-asset. Its operational metadata records consent confirmation and content hash,
-but the provider does not grant any rights to the recording or generated voice.
+The provider bundles no voice audio. Its direct CLI can fetch explicitly pinned
+CC0 Voice-Zero entries from the official repository after showing their source,
+license, and attribution. An imported reference remains the user's asset. Its
+operational metadata records consent confirmation and content hash, but the
+provider does not grant rights to the recording or generated voice.
 
 ## 4. Supported artifacts
 
@@ -260,9 +262,27 @@ upgrade. A replacement requires a new model ID and manifest.
 
 ## 9. Voice import and catalog
 
-Version 0.1 has no downloadable or embedded voices. The generic `voices`
-catalog returned by `catalog.items` lists provider-owned imported voices
-compatible with the model and returns `{"voice":"<id>"}` selection patches.
+The provider embeds no voice recordings. Its direct CLI contains an offline
+manifest of four English-compatible Voice-Zero recordings from
+`kyutai/tts-voices`, pinned to repository revision
+`323332d33f997de8394f24a193e1a76df720e01a` with exact byte sizes and SHA-256
+digests. The manifest identifies CC0 1.0, Kyutai's repository, Voice-Zero and
+LibriVox attribution. `voices available` reads only this local manifest;
+`voices install <catalog-id>` displays it, obtains interactive acknowledgement
+or explicit automation flags, downloads the immutable source, verifies it, and
+passes it through the ordinary importer. The complete live repository is not
+enumerated or treated as uniformly licensed.
+
+| Catalog ID | Repository path | Bytes | SHA-256 |
+| --- | --- | ---: | --- |
+| `voice-zero-bill-boerst` | `voice-zero/bill_boerst.wav` | 955496 | `be4815e4fb760ba1b78117545a260cce4a4c124c7657bc5c6127a0fef8ba661f` |
+| `voice-zero-caro-davy` | `voice-zero/caro_davy.wav` | 743528 | `40c692c005a0268a7a5b6ebae348077d3dca6a86eb6b12bd36e343bbcd71b5f6` |
+| `voice-zero-peter-yearsley` | `voice-zero/peter_yearsley.wav` | 524448 | `fbb3920fda7ae26a5a8b317ffcae1d55c0bd5d89d075205f5a52b1e924b83f51` |
+| `voice-zero-stuart-bell` | `voice-zero/stuart_bell.wav` | 745776 | `00c7baeb2fb7a8c1c6198e045b5e853a7ccc04002a51a09b4be3dd7c96994f73` |
+
+The generic `voices` catalog returned by `catalog.items` lists provider-owned
+installed voices compatible with the model and returns `{"voice":"<id>"}`
+selection patches. Protocol `asset.import` remains local-file-only.
 
 `asset.import` with kind `voice` requires:
 
@@ -272,22 +292,30 @@ compatible with the model and returns `{"voice":"<id>"}` selection patches.
 - `consent_confirmed: true`;
 - a RIFF/WAVE, mono, uncompressed PCM16 reference at 16,000–48,000 Hz;
 - duration from 1.0 through 30.0 seconds;
-- a regular file no larger than 5 MiB.
+- a regular classic RIFF/WAVE file whose declared 32-bit RIFF size matches the
+  source.
 
 The importer opens without following a final symlink where the platform allows,
-validates all WAV sizes before allocation, decodes it, removes no content, and
-writes a normalized provider-owned mono PCM16 WAV. Version 0.1 preserves the
-input sample rate because sherpa-onnx accepts the reference rate explicitly.
+validates checked chunk sizes, streams and hashes the complete container, skips
+metadata with a fixed buffer, and allocates only the format- and
+duration-validated PCM payload. It checks cancellation between chunks, verifies
+that the data did not change between inspection and decoding, and writes a
+normalized provider-owned mono PCM16 WAV. A source larger than 5 MiB is warned
+about by the direct CLI but is not rejected. Version 0.1 preserves the input
+sample rate because sherpa-onnx accepts the reference rate explicitly.
 
 Metadata stores the voice ID, SHA-256 of decoded sample content and source file,
 sample rate, sample count, import time, model compatibility, and the boolean
-consent confirmation. It never stores the original path. Reimporting identical
-content to the same ID is idempotent; different content at an existing ID is an
-explicit conflict and never overwrites silently.
+consent confirmation. It never stores the original path or arbitrary URL.
+Curated imports additionally store their public repository, revision, path,
+license, and attribution. Reimporting identical content to the same ID is
+idempotent; different content at an existing ID is an explicit conflict and
+never overwrites silently.
 
-The catalog reports kind `imported`, status `installed`, and license ID
-`user-provided-reference`. It makes no language or identity inference from the
-audio.
+The catalog reports ordinary references as kind `imported` with license ID
+`user-provided-reference`. Verified manifest downloads are kind `curated` and
+retain their CC0 source disclosure. The provider makes no identity inference
+from audio.
 
 ## 10. Storage and concurrency
 
@@ -440,14 +468,16 @@ The provider creates no child process.
 ## 15. Network and privacy
 
 Hello, initialization, validation, catalogs without refresh, runtime health,
-voice import, and all synthesis are network-free. The engine must be configured
-from explicit local paths so it cannot auto-download.
+protocol asset import, and all synthesis are network-free. The engine must be
+configured from explicit local paths so it cannot auto-download.
 
-Only explicit `prepare.apply` may use the network as described in section 11.
-The provider consumes no credential or proxy environment variables. Spoken
-text, reference samples, original import paths, and generated audio never leave
-the machine. Diagnostics contain stable IDs and error classes, not text, sample
-content, unrestricted paths, or stack traces.
+Only explicit model preparation, direct `voices install`, or direct
+`voices import <HTTP(S)-URL>` may use the network. Download clients honor system
+proxy configuration and standard proxy environment variables. URLs use normal
+HTTP client semantics, including embedded credentials when supplied by the
+human caller. Runtime speech remains offline: spoken text, local reference
+samples, and generated audio are not uploaded. Diagnostics contain stable IDs
+and error classes rather than text, sample content, or stack traces.
 
 ## 16. Direct CLI
 
@@ -460,7 +490,10 @@ utterpipe-pocket-tts models list [--data-dir <path>] [--cache-dir <path>]
 utterpipe-pocket-tts models prepare [--data-dir <path>] [--cache-dir <path>]
 utterpipe-pocket-tts models remove <id> [--data-dir <path>] [--cache-dir <path>]
 utterpipe-pocket-tts voices list [--data-dir <path>] [--cache-dir <path>]
-utterpipe-pocket-tts voices import <wav> --id <id> --consent-confirmed \
+utterpipe-pocket-tts voices available [--data-dir <path>] [--cache-dir <path>]
+utterpipe-pocket-tts voices install <catalog-id> [--id <id>] \
+  [--accept cc0-1.0] [--yes] [--data-dir <path>] [--cache-dir <path>]
+utterpipe-pocket-tts voices import <path-or-http-url> --id <id> --consent-confirmed \
   [--data-dir <path>] [--cache-dir <path>]
 utterpipe-pocket-tts voices remove <id> [--data-dir <path>] [--cache-dir <path>]
 utterpipe-pocket-tts protocol --stdio
@@ -548,8 +581,12 @@ requires:
   rejection;
 - all three model disclosures shown and required before network or mutation;
 - offline runtime verification by denying network access;
-- valid and invalid PCM16 voice imports, duration/rate/size limits, consent
-  refusal, idempotent import, collision refusal, and source-path redaction;
+- valid and invalid PCM16 voice imports, duration/rate/RIFF limits, large
+  streamed metadata and warning behavior, cancellation, consent refusal,
+  idempotent import, collision refusal, and source-path redaction;
+- offline curated catalog metadata; pinned network download size/hash/license/
+  attribution verification; HTTP(S) import; proxy behavior; private staging and
+  cleanup after success, failure, timeout, or cancellation;
 - a real Pocket golden synthesis with non-silent, bounded 24 kHz mono output;
 - callback sample concatenation equal to complete generation output;
 - first incremental frame observed before terminal completion;

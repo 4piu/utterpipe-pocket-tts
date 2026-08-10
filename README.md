@@ -13,11 +13,11 @@ The provider executable **does not bundle the model or a voice**:
 
 - `models prepare` downloads the pinned converted model after showing its
   CC-BY-4.0 terms, acceptable-use conditions, and non-commercial notice.
-- Voices are not downloaded automatically. Kyutai publishes compatible
-  reference recordings in the official
+- Voices are not downloaded automatically. The provider offers a small,
+  checksum-pinned CC0 selection from Kyutai's official
   [`kyutai/tts-voices`](https://huggingface.co/kyutai/tts-voices) repository,
-  or you can supply another WAV that you have permission to use. Each upstream
-  collection retains its own license and attribution requirements.
+  or you can import another local or HTTP(S) WAV that you have permission to
+  use. Each upstream collection retains its own license and attribution.
 - The provider stores the model and imported reference locally. It does not
   upload or publish imported voices.
 
@@ -65,21 +65,30 @@ utterpipe-pocket-tts models prepare
 The command displays the model disclosures and asks before accepting each one
 and downloading the pinned model. Every prompt defaults to no.
 
-### 3. Import your voice reference
+### 3. Install a voice
 
-The provider does not bundle voices. Download a compatible WAV from Kyutai's
-[`tts-voices`](https://huggingface.co/kyutai/tts-voices) repository after
-reviewing that recording's collection-specific license, or provide another
-authorized recording. Then import the local file:
+The provider does not bundle voices. List its offline, pinned catalog and
+install one selection:
 
 ```sh
-utterpipe-pocket-tts voices import /absolute/path/to/reference.wav --id my-voice
+utterpipe-pocket-tts voices available
+utterpipe-pocket-tts voices install voice-zero-caro-davy
 ```
 
-The command asks you to confirm that you have the necessary rights and consent.
-The WAV must be a regular mono PCM16 RIFF/WAVE file at 16–48 kHz, 1–30 seconds
-long, and no larger than 5 MiB. For best results, use a clean recording with one
-speaker and little background noise.
+The install command shows the exact source revision, attribution, checksum, and
+CC0 license, then asks for acknowledgement before downloading. To use another
+authorized recording instead, reuse the same import command for a path or URL:
+
+```sh
+utterpipe-pocket-tts voices import ./reference.wav --id my-voice
+utterpipe-pocket-tts voices import https://example.test/reference.wav --id my-voice
+```
+
+Import asks you to confirm the necessary rights and consent. The WAV must be a
+regular mono PCM16 RIFF/WAVE file at 16–48 kHz and 1–30 seconds long. Inputs
+larger than 5 MiB produce a warning but are streamed and remain cancellable.
+For best results, use a clean recording with one speaker and little background
+noise.
 
 ### 4. Configure Agent Speak
 
@@ -96,9 +105,9 @@ On PowerShell, use:
 irm https://raw.githubusercontent.com/4piu/agent-speak/master/examples/pocket-provider.toml -OutFile agent-speak.toml
 ```
 
-The template already selects the pinned model and `voice = "my-voice"`. Change
-the `voice` value if you chose a different ID, then validate the complete
-profile and installed assets:
+The template selects the pinned model and `voice = "my-voice"`. Change the
+`voice` value to your chosen ID—for example `voice-zero-caro-davy`—then validate
+the complete profile and installed assets:
 
 ```sh
 agent-speak validate --config /absolute/path/to/agent-speak.toml

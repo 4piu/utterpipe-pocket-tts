@@ -5,6 +5,7 @@ pub mod engine;
 pub mod model;
 pub mod protocol;
 pub mod store;
+pub mod voice;
 
 pub const PROVIDER_SLUG: &str = "pocket-tts";
 pub const PROVIDER_NAME: &str = "Pocket TTS provider";
