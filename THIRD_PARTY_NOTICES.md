@@ -37,6 +37,8 @@ stored separately. Its archive identifies these sources and conditions:
 
 - Pocket TTS: <https://github.com/kyutai-labs/pocket-tts>
 - Model card and acceptable-use conditions: <https://huggingface.co/kyutai/pocket-tts>
+- Optional reference-voice repository: <https://huggingface.co/kyutai/tts-voices>
+  (recording licenses and attribution requirements vary by collection)
 - ONNX conversion: <https://github.com/KevinAHM/pocket-tts-onnx-export>
 - Converted archive license: CC-BY-4.0
 - Converted archive README notice: “It is for non-commercial.”

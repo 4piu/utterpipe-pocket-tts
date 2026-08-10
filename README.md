@@ -13,8 +13,11 @@ The provider executable **does not bundle the model or a voice**:
 
 - `models prepare` downloads the pinned converted model after showing its
   CC-BY-4.0 terms, acceptable-use conditions, and non-commercial notice.
-- There is no downloadable voice pack. A voice is created locally from a WAV
-  reference that you supply and have permission to use.
+- Voices are not downloaded automatically. Kyutai publishes compatible
+  reference recordings in the official
+  [`kyutai/tts-voices`](https://huggingface.co/kyutai/tts-voices) repository,
+  or you can supply another WAV that you have permission to use. Each upstream
+  collection retains its own license and attribution requirements.
 - The provider stores the model and imported reference locally. It does not
   upload or publish imported voices.
 
@@ -64,8 +67,10 @@ and downloading the pinned model. Every prompt defaults to no.
 
 ### 3. Import your voice reference
 
-The project does not distribute voices, so provide your own authorized
-recording:
+The provider does not bundle voices. Download a compatible WAV from Kyutai's
+[`tts-voices`](https://huggingface.co/kyutai/tts-voices) repository after
+reviewing that recording's collection-specific license, or provide another
+authorized recording. Then import the local file:
 
 ```sh
 utterpipe-pocket-tts voices import /absolute/path/to/reference.wav --id my-voice

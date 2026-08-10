@@ -53,6 +53,9 @@ The engine integration is pinned to:
 - Pocket TTS: <https://github.com/kyutai-labs/pocket-tts>;
 - official model card and use conditions:
   <https://huggingface.co/kyutai/pocket-tts>;
+- optional upstream reference recordings:
+  <https://huggingface.co/kyutai/tts-voices> (licenses and attribution vary by
+  collection; version 0.1 does not fetch them);
 - sherpa-onnx source tag `v1.13.4`, commit
   `142807252687d81b40d6315f23470a1512a00de3`:
   <https://github.com/k2-fsa/sherpa-onnx>;
