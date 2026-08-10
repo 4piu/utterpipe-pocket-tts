@@ -166,7 +166,10 @@ the engine.
 Version 0.1 pins `pocket-tts-int8-2026-01-26` and statically links sherpa-onnx
 1.13.4. macOS arm64, Linux x86_64, and Windows x86_64 are verified locally.
 Tagged release archives contain the provider and documentation, not the model
-or a voice.
+or a voice. Kyutai publishes the upstream gated
+[`model.safetensors` weights](https://huggingface.co/kyutai/pocket-tts); they
+are provenance/source weights for compatible Pocket runtimes, not drop-in files
+for this provider's current sherpa-onnx model installer.
 
 ## More documentation
 

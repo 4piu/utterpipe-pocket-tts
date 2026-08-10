@@ -218,6 +218,10 @@ The native test generates a deterministic synthetic reference by default. Set
 `UTTERPIPE_POCKET_REFERENCE_WAV` to an absolute user-approved reference only
 for an optional listening test.
 
+For repeatable local latency and real-time-factor measurements against an
+already-prepared model and voice, see the experimental
+[runtime evaluation](runtime-evaluation.md).
+
 ## Runtime and cancellation boundaries
 
 The provider supports complete PCM16 WAV and genuine incremental 24 kHz mono
