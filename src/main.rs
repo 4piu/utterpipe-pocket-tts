@@ -3,10 +3,13 @@ use std::{io::Write, path::PathBuf};
 use clap::{Args, Parser, Subcommand};
 use utterpipe_pocket_tts::{
     PROVIDER_NAME, PROVIDER_SLUG, PROVIDER_VENDOR, PROVIDER_VERSION,
-    model::{LICENSE_IDS, MODEL_ID, licenses, model_descriptor},
+    direct_storage::resolve_direct_storage,
+    model::{MODEL_ID, licenses, model_descriptor},
     protocol,
     store::Store,
 };
+
+mod cli_confirm;
 
 #[derive(Parser)]
 #[command(name = "utterpipe-pocket-tts", version, about)]
@@ -40,10 +43,12 @@ enum Command {
 
 #[derive(Args, Clone)]
 struct Storage {
+    /// Override the platform-standard provider data directory.
     #[arg(long)]
-    data_dir: PathBuf,
+    data_dir: Option<PathBuf>,
+    /// Override the platform-standard provider cache directory.
     #[arg(long)]
-    cache_dir: PathBuf,
+    cache_dir: Option<PathBuf>,
 }
 
 #[derive(Subcommand)]
@@ -144,7 +149,7 @@ async fn run() -> Result<(), String> {
             ModelCommand::Prepare {
                 storage,
                 archive,
-                accepted,
+                mut accepted,
                 yes,
             } => {
                 println!("Plan: install {MODEL_ID}");
@@ -153,17 +158,7 @@ async fn run() -> Result<(), String> {
                     serde_json::to_string_pretty(&licenses())
                         .map_err(|_| "could not encode model disclosures".to_owned())?
                 );
-                if !yes {
-                    return Err("preparation requires --yes after reviewing the plan".to_owned());
-                }
-                if !LICENSE_IDS
-                    .iter()
-                    .all(|required| accepted.iter().any(|value| value == required))
-                {
-                    return Err(
-                        "all three disclosure IDs must be supplied with --accept".to_owned()
-                    );
-                }
+                cli_confirm::prepare(&mut accepted, yes)?;
                 let store = store(storage)?;
                 if let Some(archive) = archive {
                     store
@@ -179,11 +174,9 @@ async fn run() -> Result<(), String> {
                 if id != MODEL_ID {
                     return Err("unknown model ID".to_owned());
                 }
-                if !yes {
-                    return Err("removal requires --yes".to_owned());
-                }
                 let artifact = format!("model:{id}");
                 println!("Plan: remove {artifact}");
+                cli_confirm::removal(yes, &artifact)?;
                 store(storage)?
                     .remove_artifacts(std::slice::from_ref(&artifact))
                     .map_err(public_store_error)?;
@@ -212,6 +205,7 @@ async fn run() -> Result<(), String> {
                 storage,
             } => {
                 println!("Plan: normalize and import voice:{id}");
+                let consent_confirmed = cli_confirm::voice_import(consent_confirmed)?;
                 store(storage)?
                     .import_voice(&wav, &id, consent_confirmed, 30.0)
                     .map_err(public_store_error)?;
@@ -219,11 +213,9 @@ async fn run() -> Result<(), String> {
                 Ok(())
             }
             VoiceCommand::Remove { id, storage, yes } => {
-                if !yes {
-                    return Err("removal requires --yes".to_owned());
-                }
                 let artifact = format!("voice:{id}");
                 println!("Plan: remove {artifact}");
+                cli_confirm::removal(yes, &artifact)?;
                 store(storage)?
                     .remove_artifacts(std::slice::from_ref(&artifact))
                     .map_err(public_store_error)?;
@@ -241,6 +233,8 @@ async fn run() -> Result<(), String> {
 }
 
 fn store(storage: Storage) -> Result<Store, String> {
+    let storage = resolve_direct_storage(storage.data_dir, storage.cache_dir)
+        .map_err(|error| error.to_string())?;
     Store::new(storage.data_dir, storage.cache_dir).map_err(public_store_error)
 }
 

@@ -1,5 +1,6 @@
 use std::{
     io::{Read, Write},
+    path::PathBuf,
     process::{Child, ChildStdin, ChildStdout, Command, Stdio},
 };
 
@@ -147,6 +148,46 @@ fn direct_cli_flushes_output_when_stdout_is_piped() {
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("Pocket TTS provider"));
     assert!(stdout.contains("protocol: utterpipe.tts v1"));
+}
+
+#[test]
+fn direct_cli_uses_the_platform_data_root_when_no_override_is_supplied() {
+    let temp = TempDir::new().unwrap();
+    let (environment_name, environment_value, data_dir) = platform_data_root(&temp);
+    std::fs::create_dir_all(&data_dir).unwrap();
+    std::fs::write(data_dir.join("schema.json"), r#"{"schema_version":2}"#).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_utterpipe-pocket-tts"))
+        .args(["doctor", "--cache-dir"])
+        .arg(temp.path().join("explicit-cache"))
+        .env(environment_name, environment_value)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("provider operational schema is unsupported"));
+    assert!(!stderr.contains(temp.path().to_string_lossy().as_ref()));
+}
+
+#[cfg(windows)]
+fn platform_data_root(temp: &TempDir) -> (&'static str, PathBuf, PathBuf) {
+    let base = temp.path().join("local-app-data");
+    let data = base.join("UtterPipe/providers/pocket-tts/data");
+    ("LOCALAPPDATA", base, data)
+}
+
+#[cfg(target_os = "macos")]
+fn platform_data_root(temp: &TempDir) -> (&'static str, PathBuf, PathBuf) {
+    let home = temp.path().join("home");
+    let data = home.join("Library/Application Support/UtterPipe/providers/pocket-tts/data");
+    ("HOME", home, data)
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn platform_data_root(temp: &TempDir) -> (&'static str, PathBuf, PathBuf) {
+    let data_home = temp.path().join("xdg-data");
+    let data = data_home.join("utterpipe/providers/pocket-tts");
+    ("XDG_DATA_HOME", data_home, data)
 }
 
 #[test]

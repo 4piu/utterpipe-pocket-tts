@@ -107,9 +107,19 @@ between 1 and 30 seconds, and no larger than 5 MiB.
 
 ## Direct provider commands
 
-Custom-host integrators and provider developers can manage explicit roots
-directly. The `--data-dir` and `--cache-dir` values must exactly match the roots
-that the host will later pass to the provider:
+Human-facing management commands use the same platform-standard provider roots
+as Agent Speak when `--data-dir` and `--cache-dir` are omitted:
+
+- macOS data: `~/Library/Application Support/UtterPipe/providers/pocket-tts/data`
+- macOS cache: `~/Library/Caches/UtterPipe/providers/pocket-tts`
+- Linux data: `${XDG_DATA_HOME:-~/.local/share}/utterpipe/providers/pocket-tts`
+- Linux cache: `${XDG_CACHE_HOME:-~/.cache}/utterpipe/providers/pocket-tts`
+- Windows data: `%LOCALAPPDATA%\UtterPipe\providers\pocket-tts\data`
+- Windows cache: `%LOCALAPPDATA%\UtterPipe\providers\pocket-tts\cache`
+
+Each flag independently overrides its default. Custom-host integrators should
+pass both explicitly, using the exact roots that their host will later supply
+to the provider protocol:
 
 ```text
 utterpipe-pocket-tts models prepare \
@@ -125,25 +135,38 @@ utterpipe-pocket-tts voices import /absolute/reference.wav --id my-voice \
 
 ```text
 utterpipe-pocket-tts info
-utterpipe-pocket-tts doctor --data-dir <path> --cache-dir <path>
-utterpipe-pocket-tts models list --data-dir <path> --cache-dir <path>
+utterpipe-pocket-tts doctor [--data-dir <path>] [--cache-dir <path>]
+utterpipe-pocket-tts models list [--data-dir <path>] [--cache-dir <path>]
 utterpipe-pocket-tts models prepare [--archive <path>] --accept <id>... --yes \
-  --data-dir <path> --cache-dir <path>
+  [--data-dir <path>] [--cache-dir <path>]
 utterpipe-pocket-tts models remove <model-id> --yes \
-  --data-dir <path> --cache-dir <path>
-utterpipe-pocket-tts voices list --data-dir <path> --cache-dir <path>
+  [--data-dir <path>] [--cache-dir <path>]
+utterpipe-pocket-tts voices list [--data-dir <path>] [--cache-dir <path>]
 utterpipe-pocket-tts voices import <wav> --id <id> --consent-confirmed \
-  --data-dir <path> --cache-dir <path>
+  [--data-dir <path>] [--cache-dir <path>]
 utterpipe-pocket-tts voices remove <voice-id> --yes \
-  --data-dir <path> --cache-dir <path>
+  [--data-dir <path>] [--cache-dir <path>]
 utterpipe-pocket-tts protocol --stdio
 ```
+
+The defaults are a direct-CLI convenience only. `protocol --stdio` never
+discovers storage from the provider environment: the launching host must still
+supply absolute, private `data_dir` and `cache_dir` values during session
+initialization.
 
 Every mutating CLI path uses the same checked store operations and cross-process
 locks as the framed management protocol. The CLI renders its own equivalent
 human-readable plan; protocol plan IDs remain scoped to their live management
 session. Removal never proceeds while a runtime leases an affected model or
 voice.
+
+For direct human use in a terminal, a missing `--yes`, `--accept`, or
+`--consent-confirmed` value is requested interactively after the corresponding
+plan and disclosures are shown. Every prompt defaults to no. Interactive mode
+requires stdin, stdout, and stderr to be terminals; redirected or piped commands
+never treat input as authorization and must supply every flag explicitly. The
+framed provider protocol never prompts and retains its explicit plan/apply,
+license-acceptance, and consent fields.
 
 ## Provider options
 

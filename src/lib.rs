@@ -1,5 +1,6 @@
 pub mod audio;
 pub mod config;
+pub mod direct_storage;
 pub mod engine;
 pub mod model;
 pub mod protocol;

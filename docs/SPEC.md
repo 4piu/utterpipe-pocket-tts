@@ -452,22 +452,46 @@ The executable provides:
 
 ```text
 utterpipe-pocket-tts info
-utterpipe-pocket-tts doctor --data-dir <path> --cache-dir <path>
-utterpipe-pocket-tts models list --data-dir <path> --cache-dir <path>
-utterpipe-pocket-tts models prepare --data-dir <path> --cache-dir <path>
-utterpipe-pocket-tts models remove <id> --data-dir <path> --cache-dir <path>
-utterpipe-pocket-tts voices list --data-dir <path> --cache-dir <path>
+utterpipe-pocket-tts doctor [--data-dir <path>] [--cache-dir <path>]
+utterpipe-pocket-tts models list [--data-dir <path>] [--cache-dir <path>]
+utterpipe-pocket-tts models prepare [--data-dir <path>] [--cache-dir <path>]
+utterpipe-pocket-tts models remove <id> [--data-dir <path>] [--cache-dir <path>]
+utterpipe-pocket-tts voices list [--data-dir <path>] [--cache-dir <path>]
 utterpipe-pocket-tts voices import <wav> --id <id> --consent-confirmed \
-  --data-dir <path> --cache-dir <path>
-utterpipe-pocket-tts voices remove <id> --data-dir <path> --cache-dir <path>
+  [--data-dir <path>] [--cache-dir <path>]
+utterpipe-pocket-tts voices remove <id> [--data-dir <path>] [--cache-dir <path>]
 utterpipe-pocket-tts protocol --stdio
 ```
 
-Mutating human commands print an equivalent human-readable plan and require an
-explicit confirmation/consent flag. Protocol plan IDs are deliberately not
-reused: they belong to one live management session. The CLI and protocol call
-the same validation, catalog, checked store, import, download, preparation, and
-removal primitives, including the same cross-process mutation and asset locks.
+For these direct human commands only, an omitted root resolves to the current
+user's platform-standard Pocket provider location. macOS uses
+`~/Library/Application Support/UtterPipe/providers/pocket-tts/data` and
+`~/Library/Caches/UtterPipe/providers/pocket-tts`; Linux uses
+`${XDG_DATA_HOME:-~/.local/share}/utterpipe/providers/pocket-tts` and
+`${XDG_CACHE_HOME:-~/.cache}/utterpipe/providers/pocket-tts`; Windows uses the
+`data` and `cache` children of
+`%LOCALAPPDATA%\UtterPipe\providers\pocket-tts`. Each explicit flag overrides
+only its corresponding default. A missing, empty, relative, or otherwise
+unusable platform base fails closed and tells the user to pass that root.
+
+This discovery never applies to `protocol --stdio`. Under the provider
+protocol, the host remains solely responsible for supplying the absolute,
+private, distinct storage roots in `session.initialize`; the provider neither
+falls back to direct-CLI defaults nor merges them with host values.
+
+Mutating human commands print an equivalent human-readable plan. When stdin,
+stdout, and stderr are all terminals, missing confirmation, disclosure
+acceptance, and voice-consent flags are requested interactively after the plan
+and disclosures are shown; each question defaults to refusal. If any of those
+streams is redirected or piped, every required flag remains mandatory and
+input is never consumed as authorization. Explicit flags bypass prompting.
+
+The framed protocol never prompts and continues to require its explicit
+plan/apply, disclosure-acceptance, and consent fields. Protocol plan IDs are
+deliberately not reused: they belong to one live management session. The CLI
+and protocol call the same validation, catalog, checked store, import,
+download, preparation, and removal primitives, including the same
+cross-process mutation and asset locks.
 
 ## 17. Errors and diagnostics
 
