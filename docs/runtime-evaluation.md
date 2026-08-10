@@ -95,6 +95,20 @@ sherpa backend. The synthetic reference establishes runtime and protocol
 behavior only; intelligibility and severe-artifact screening still require a
 consented natural reference and listening evaluation.
 
+The current eSpeak comparator was also rebuilt and measured from isolated
+checkouts. A Windows verbatim-path compatibility fix was required before the
+benchmark's canonical absolute cache roots worked with eSpeak's narrow CRT file
+API.
+
+| Host | Initialize | Completion p50 / p95 | RTF p50 / p95 | Steady / sampled-peak RSS | Executable |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Apple M4 macOS | 22 ms | 15.9 / 17.0 ms | 0.00505 / 0.00540 | 4.39 / 4.77 MB | 20.28 MB |
+| Windows 11, Ryzen 7 9800X3D | 276 ms | 43.7 / 44.6 ms | 0.01396 / 0.01426 | 27.64 / 27.67 MB | 20.57 MB |
+| Manjaro Linux, Core i9-12900K | 10 ms | 10.5 / 10.7 ms | 0.00336 / 0.00341 | 28.36 / 29.90 MB | 20.46 MB |
+
+Windows and Linux produced the same deterministic 138,076-byte, 3.130-second
+WAV. Each reconstructed eSpeak cache contained 18.46 MB across 515 files.
+
 ## Candidate set
 
 | Runtime | Role in evaluation | Three-platform evidence | Deployment concern |
