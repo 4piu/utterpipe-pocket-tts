@@ -115,3 +115,49 @@ fn piped_yes_does_not_authorize_curated_voice_download() {
     assert!(!data.exists());
     assert!(!cache.exists());
 }
+
+#[test]
+fn noninteractive_curated_install_requires_a_selection() {
+    let temp = tempfile::tempdir().unwrap();
+    let data = temp.path().join("data");
+    let cache = temp.path().join("cache");
+    let storage = storage_arguments(&data, &cache);
+    let output = Command::new(env!("CARGO_BIN_EXE_utterpipe-pocket-tts"))
+        .args(["voices", "install"])
+        .args(storage)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("requires one or more catalog IDs or numbers")
+    );
+    assert!(!data.exists());
+    assert!(!cache.exists());
+}
+
+#[test]
+fn multi_pack_install_requires_each_selected_license_before_network() {
+    let temp = tempfile::tempdir().unwrap();
+    let data = temp.path().join("data");
+    let cache = temp.path().join("cache");
+    let storage = storage_arguments(&data, &cache);
+    let output = Command::new(env!("CARGO_BIN_EXE_utterpipe-pocket-tts"))
+        .args([
+            "voices", "install", "1", "5", "--accept", "cc0-1.0", "--yes",
+        ])
+        .args(storage)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("requires --accept cc-by-4.0")
+    );
+    assert!(!data.exists());
+    assert!(!cache.exists());
+}

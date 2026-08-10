@@ -1,7 +1,7 @@
 use std::io::{self, BufRead, IsTerminal, Write};
 
 use utterpipe_pocket_tts::model::LICENSE_IDS;
-use utterpipe_pocket_tts::voice::CURATED_LICENSE_ID;
+use utterpipe_pocket_tts::voice::CuratedLicense;
 
 const PREPARE_CONFIRMATION_REQUIRED: &str = "preparation requires --yes after reviewing the plan";
 const LICENSE_ACCEPTANCE_REQUIRED: &str = "all three disclosure IDs must be supplied with --accept";
@@ -21,9 +21,13 @@ pub(crate) fn voice_import(consent_confirmed: bool) -> Result<bool, String> {
     })
 }
 
-pub(crate) fn curated_voice_install(accepted: &mut Vec<String>, yes: bool) -> Result<(), String> {
+pub(crate) fn curated_voice_install(
+    licenses: &[CuratedLicense],
+    accepted: &mut Vec<String>,
+    yes: bool,
+) -> Result<(), String> {
     with_terminal(|input, output, interactive| {
-        curated_voice_install_with(input, output, interactive, accepted, yes)
+        curated_voice_install_with(input, output, interactive, licenses, accepted, yes)
     })
 }
 
@@ -107,6 +111,7 @@ fn curated_voice_install_with(
     input: &mut dyn BufRead,
     output: &mut dyn Write,
     interactive: bool,
+    licenses: &[CuratedLicense],
     accepted: &mut Vec<String>,
     yes: bool,
 ) -> Result<(), String> {
@@ -115,22 +120,27 @@ fn curated_voice_install_with(
             "curated voice installation requires --yes after reviewing the plan".to_owned(),
         );
     }
-    if !accepted.iter().any(|value| value == CURATED_LICENSE_ID) {
+    for license in licenses {
+        if accepted.iter().any(|value| value == license.id) {
+            continue;
+        }
         if !interactive {
             return Err(format!(
-                "curated voice installation requires --accept {CURATED_LICENSE_ID}"
+                "curated voice installation requires --accept {}",
+                license.id
             ));
         }
         if !confirm(
             input,
             output,
             &format!(
-                "Acknowledge upstream license '{CURATED_LICENSE_ID}' and confirm permitted, consented use? [y/N] "
+                "Acknowledge upstream license '{}' and confirm permitted, consented use? [y/N] ",
+                license.id
             ),
         )? {
             return Err("curated voice license acknowledgement declined".to_owned());
         }
-        accepted.push(CURATED_LICENSE_ID.to_owned());
+        accepted.push(license.id.to_owned());
     }
     if !yes
         && !confirm(
@@ -185,6 +195,7 @@ mod tests {
     use std::io::Cursor;
 
     use super::*;
+    use utterpipe_pocket_tts::voice::{CC_BY_LICENSE, CC0_LICENSE};
 
     #[test]
     fn interactive_prepare_collects_each_missing_license_then_confirms() {
@@ -286,12 +297,20 @@ mod tests {
     #[test]
     fn curated_voice_install_collects_license_and_confirmation_interactively() {
         let mut accepted = Vec::new();
-        let mut input = Cursor::new(b"yes\ny\n");
+        let mut input = Cursor::new(b"yes\ny\ny\n");
         let mut output = Vec::new();
 
-        curated_voice_install_with(&mut input, &mut output, true, &mut accepted, false).unwrap();
+        curated_voice_install_with(
+            &mut input,
+            &mut output,
+            true,
+            &[CC0_LICENSE, CC_BY_LICENSE],
+            &mut accepted,
+            false,
+        )
+        .unwrap();
 
-        assert_eq!(accepted, [CURATED_LICENSE_ID]);
+        assert_eq!(accepted, [CC0_LICENSE.id, CC_BY_LICENSE.id]);
         let prompts = String::from_utf8(output).unwrap();
         assert!(prompts.contains("confirm permitted, consented use"));
         assert!(prompts.contains("Download and install"));
@@ -299,10 +318,18 @@ mod tests {
 
     #[test]
     fn curated_voice_install_flags_are_explicit_for_automation() {
-        let mut accepted = vec![CURATED_LICENSE_ID.to_owned()];
+        let mut accepted = vec![CC0_LICENSE.id.to_owned(), CC_BY_LICENSE.id.to_owned()];
         let mut input = Cursor::new(Vec::<u8>::new());
         let mut output = Vec::new();
-        curated_voice_install_with(&mut input, &mut output, false, &mut accepted, true).unwrap();
+        curated_voice_install_with(
+            &mut input,
+            &mut output,
+            false,
+            &[CC0_LICENSE, CC_BY_LICENSE],
+            &mut accepted,
+            true,
+        )
+        .unwrap();
         assert!(output.is_empty());
     }
 }

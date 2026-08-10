@@ -45,8 +45,7 @@ For a person using a terminal, the shortest setup is:
 
 ```text
 utterpipe-pocket-tts models prepare
-utterpipe-pocket-tts voices available
-utterpipe-pocket-tts voices install voice-zero-caro-davy
+utterpipe-pocket-tts voices install
 utterpipe-pocket-tts doctor
 ```
 
@@ -54,11 +53,16 @@ Preparation prints all model terms, prompts for each required acknowledgement,
 and confirms the download. Voice import prompts for rights and consent. Every
 prompt defaults to no.
 
-The pinned catalog is stored in the executable and listing it is offline. A
-human may alternatively import a relative/absolute path or an explicit HTTP(S)
-URL with `voices import <SOURCE> --id <id>`. Both routes use the same strict,
-streaming WAV importer. Network commands honor system proxy settings and
-standard proxy environment variables, including `NO_PROXY`.
+The pinned catalog is stored in the executable and listing it is offline.
+Interactive terminals show eight numbered entries per page and accept multiple
+numbers, IDs, comma-separated selections, and numeric ranges. `voices available`
+uses the same pager; when redirected it emits JSON Lines with a stable `number`
+field instead. Multi-install verifies every download before importing any
+selection; each subsequent voice import is its own atomic store operation. A
+human may alternatively import a relative/absolute path or an
+explicit HTTP(S) URL with `voices import <SOURCE> --id <id>`. Both routes use
+the same strict, streaming WAV importer. Network commands honor system proxy
+settings and standard proxy environment variables, including `NO_PROXY`.
 
 Interactive authorization is available only when stdin, stdout, and stderr are
 terminals. Redirected or piped commands never treat input as authorization.
@@ -104,6 +108,8 @@ utterpipe-pocket-tts voices import /absolute/reference.wav --id my-voice \
   --consent-confirmed
 utterpipe-pocket-tts voices install voice-zero-caro-davy \
   --accept cc0-1.0 --yes
+utterpipe-pocket-tts voices install 1 5 13 \
+  --accept cc0-1.0 --accept cc-by-4.0 --accept cc-by-nc-4.0 --yes
 utterpipe-pocket-tts models remove pocket-tts-int8-2026-01-26 --yes
 utterpipe-pocket-tts voices remove my-voice --yes
 ```

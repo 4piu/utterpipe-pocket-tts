@@ -263,22 +263,41 @@ upgrade. A replacement requires a new model ID and manifest.
 ## 9. Voice import and catalog
 
 The provider embeds no voice recordings. Its direct CLI contains an offline
-manifest of four English-compatible Voice-Zero recordings from
+manifest of sixteen English-compatible recordings from four collections in
 `kyutai/tts-voices`, pinned to repository revision
 `323332d33f997de8394f24a193e1a76df720e01a` with exact byte sizes and SHA-256
-digests. The manifest identifies CC0 1.0, Kyutai's repository, Voice-Zero and
-LibriVox attribution. `voices available` reads only this local manifest;
-`voices install <catalog-id>` displays it, obtains interactive acknowledgement
-or explicit automation flags, downloads the immutable source, verifies it, and
-passes it through the ordinary importer. The complete live repository is not
-enumerated or treated as uniformly licensed.
+digests. Voice-Zero is CC0 1.0; Alba MacKenna and VCTK are CC BY 4.0;
+Expresso is non-commercial CC BY-NC 4.0. Each manifest entry carries its exact
+collection attribution. `voices available` reads only this local manifest.
+Interactive terminals show a numbered eight-item pager; redirected output is
+JSON Lines with the same stable one-based numbers. `voices install` with no
+selection opens the pager and multi-select prompt. Explicit arguments may mix
+IDs, numbers, comma/space lists, and ascending numeric ranges. All selected
+licenses are shown and accepted before any download. Immutable sources are
+all downloaded and verified before the first import, then passed sequentially
+through the ordinary importer. Each installed voice is an independent atomic
+store mutation; an earlier completed import remains installed if a later import
+conflicts or fails. `--id` is restricted to a single selection. The complete
+live repository is not enumerated or treated as uniformly licensed.
 
-| Catalog ID | Repository path | Bytes | SHA-256 |
-| --- | --- | ---: | --- |
-| `voice-zero-bill-boerst` | `voice-zero/bill_boerst.wav` | 955496 | `be4815e4fb760ba1b78117545a260cce4a4c124c7657bc5c6127a0fef8ba661f` |
-| `voice-zero-caro-davy` | `voice-zero/caro_davy.wav` | 743528 | `40c692c005a0268a7a5b6ebae348077d3dca6a86eb6b12bd36e343bbcd71b5f6` |
-| `voice-zero-peter-yearsley` | `voice-zero/peter_yearsley.wav` | 524448 | `fbb3920fda7ae26a5a8b317ffcae1d55c0bd5d89d075205f5a52b1e924b83f51` |
-| `voice-zero-stuart-bell` | `voice-zero/stuart_bell.wav` | 745776 | `00c7baeb2fb7a8c1c6198e045b5e853a7ccc04002a51a09b4be3dd7c96994f73` |
+| # | Catalog ID | License | Repository path | Bytes | SHA-256 |
+| ---: | --- | --- | --- | ---: | --- |
+| 1 | `voice-zero-bill-boerst` | CC0 | `voice-zero/bill_boerst.wav` | 955496 | `be4815e4fb760ba1b78117545a260cce4a4c124c7657bc5c6127a0fef8ba661f` |
+| 2 | `voice-zero-caro-davy` | CC0 | `voice-zero/caro_davy.wav` | 743528 | `40c692c005a0268a7a5b6ebae348077d3dca6a86eb6b12bd36e343bbcd71b5f6` |
+| 3 | `voice-zero-peter-yearsley` | CC0 | `voice-zero/peter_yearsley.wav` | 524448 | `fbb3920fda7ae26a5a8b317ffcae1d55c0bd5d89d075205f5a52b1e924b83f51` |
+| 4 | `voice-zero-stuart-bell` | CC0 | `voice-zero/stuart_bell.wav` | 745776 | `00c7baeb2fb7a8c1c6198e045b5e853a7ccc04002a51a09b4be3dd7c96994f73` |
+| 5 | `alba-mackenna-a-moment-by` | CC BY | `alba-mackenna/a-moment-by.wav` | 958542 | `a1805f0e3610f0d5985f4abb51979620a012899e810019960310944bbcba509d` |
+| 6 | `alba-mackenna-announcer` | CC BY | `alba-mackenna/announcer.wav` | 958542 | `e8b55193435db043833dda62fb759ee2779ace195811340ee8d28c7c4a4ccc24` |
+| 7 | `alba-mackenna-casual` | CC BY | `alba-mackenna/casual.wav` | 958542 | `46264e83cb99115c3d210260e029117566d9c64f20266d10daa78107759ede3e` |
+| 8 | `alba-mackenna-merchant` | CC BY | `alba-mackenna/merchant.wav` | 966734 | `52c24756de299b37998ed83e32fdc8747f874f9dd67f0bcdc38b96d3f70cf488` |
+| 9 | `vctk-p225` | CC BY | `vctk/p225_023.wav` | 1166878 | `4f15f804be0f437912697ffaa56b03759e10b5e1db82fcdac20412fe95bedec9` |
+| 10 | `vctk-p226` | CC BY | `vctk/p226_023.wav` | 1166730 | `80b7c8d8eb9129af901750897727647291e13418dab919e3922ba58b482cf9a9` |
+| 11 | `vctk-p227` | CC BY | `vctk/p227_023.wav` | 1217202 | `ee47295e38d1814446c8819364e100c12208c36e267aa216feabe8884eb8ada7` |
+| 12 | `vctk-p228` | CC BY | `vctk/p228_023.wav` | 1206922 | `675eccc60019e09cb0e0f5bfaa2364f6406ce3eb520a776811bb3513358ad5a8` |
+| 13 | `expresso-ex01-default` | CC BY-NC | `expresso/ex01-ex02_default_001_channel1_168s.wav` | 960044 | `7e196b0f345e11f4d54fbcf4376b3f1f845837f5122f7dd2e1c040410ec3c3c8` |
+| 14 | `expresso-ex01-enunciated` | CC BY-NC | `expresso/ex01-ex02_enunciated_001_channel1_432s.wav` | 960044 | `e97124f3cd441dcb762e9900f7e6432b342efcfa1dd404c49d8fb80b6e0fa70d` |
+| 15 | `expresso-ex01-fast` | CC BY-NC | `expresso/ex01-ex02_fast_001_channel1_104s.wav` | 960044 | `a6e52ea63a1b4b51b66ddad62c40af18a9f510baeea250bad52b631b7edeb95f` |
+| 16 | `expresso-ex01-whisper` | CC BY-NC | `expresso/ex01-ex02_whisper_001_channel1_579s.wav` | 960044 | `292ee886268549c3a059fed12e39c07fcd90229ecb59abd25da6ecf986a7a882` |
 
 The generic `voices` catalog returned by `catalog.items` lists provider-owned
 installed voices compatible with the model and returns `{"voice":"<id>"}`
@@ -314,8 +333,8 @@ never overwrites silently.
 
 The catalog reports ordinary references as kind `imported` with license ID
 `user-provided-reference`. Verified manifest downloads are kind `curated` and
-retain their CC0 source disclosure. The provider makes no identity inference
-from audio.
+retain their collection-specific source and license disclosure. The provider
+makes no identity inference from audio.
 
 ## 10. Storage and concurrency
 
@@ -491,8 +510,8 @@ utterpipe-pocket-tts models prepare [--data-dir <path>] [--cache-dir <path>]
 utterpipe-pocket-tts models remove <id> [--data-dir <path>] [--cache-dir <path>]
 utterpipe-pocket-tts voices list [--data-dir <path>] [--cache-dir <path>]
 utterpipe-pocket-tts voices available [--data-dir <path>] [--cache-dir <path>]
-utterpipe-pocket-tts voices install <catalog-id> [--id <id>] \
-  [--accept cc0-1.0] [--yes] [--data-dir <path>] [--cache-dir <path>]
+utterpipe-pocket-tts voices install [<id-or-number-or-range>...] [--id <id>] \
+  [--accept <license-id>]... [--yes] [--data-dir <path>] [--cache-dir <path>]
 utterpipe-pocket-tts voices import <path-or-http-url> --id <id> --consent-confirmed \
   [--data-dir <path>] [--cache-dir <path>]
 utterpipe-pocket-tts voices remove <id> [--data-dir <path>] [--cache-dir <path>]

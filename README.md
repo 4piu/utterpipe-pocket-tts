@@ -14,10 +14,11 @@ The provider executable **does not bundle the model or a voice**:
 - `models prepare` downloads the pinned converted model after showing its
   CC-BY-4.0 terms, acceptable-use conditions, and non-commercial notice.
 - Voices are not downloaded automatically. The provider offers a small,
-  checksum-pinned CC0 selection from Kyutai's official
+  checksum-pinned selection from Kyutai's official
   [`kyutai/tts-voices`](https://huggingface.co/kyutai/tts-voices) repository,
   or you can import another local or HTTP(S) WAV that you have permission to
-  use. Each upstream collection retains its own license and attribution.
+  use. The catalog includes CC0, CC BY 4.0, and non-commercial CC BY-NC 4.0
+  collections; every selection retains its own license and attribution.
 - The provider stores the model and imported reference locally. It does not
   upload or publish imported voices.
 
@@ -67,17 +68,26 @@ and downloading the pinned model. Every prompt defaults to no.
 
 ### 3. Install a voice
 
-The provider does not bundle voices. List its offline, pinned catalog and
-install one selection:
+The provider does not bundle voices. Open its interactive, paged catalog and
+choose one or more numbered selections:
+
+```sh
+utterpipe-pocket-tts voices install
+```
+
+`voices available` shows the same numbered pages without installing. You can
+also select IDs, numbers, comma lists, or ranges directly:
 
 ```sh
 utterpipe-pocket-tts voices available
+utterpipe-pocket-tts voices install 2 5-7
 utterpipe-pocket-tts voices install voice-zero-caro-davy
 ```
 
-The install command shows the exact source revision, attribution, checksum, and
-CC0 license, then asks for acknowledgement before downloading. To use another
-authorized recording instead, reuse the same import command for a path or URL:
+The install command shows each exact source revision, attribution, checksum,
+and applicable license, then asks for acknowledgement before downloading. To
+use another authorized recording instead, reuse the same import command for a
+path or URL:
 
 ```sh
 utterpipe-pocket-tts voices import ./reference.wav --id my-voice

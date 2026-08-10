@@ -384,6 +384,12 @@ fn available_catalog_is_offline_pinned_and_reports_storage_status() {
             .iter()
             .all(|voice| voice["status"] == "available")
     );
+    assert!(
+        descriptors
+            .iter()
+            .enumerate()
+            .all(|(index, voice)| { voice["number"].as_u64() == u64::try_from(index + 1).ok() })
+    );
     assert!(descriptors.iter().all(|voice| {
         voice["revision"]
             .as_str()

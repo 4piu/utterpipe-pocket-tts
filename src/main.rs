@@ -12,11 +12,12 @@ use utterpipe_pocket_tts::{
     protocol,
     store::{Store, VoiceProvenance},
     voice::{
-        CURATED_LICENSE_ID, CURATED_LICENSE_NAME, CURATED_LICENSE_URL, CURATED_VOICES,
-        ExpectedDownload, VoiceSource, curated_download_url, curated_voice_by_id, download_voice,
+        CURATED_VOICES, CuratedLicense, CuratedVoice, ExpectedDownload, VoiceSource,
+        curated_download_url, curated_license_by_id, download_voice,
     },
 };
 
+mod cli_catalog;
 mod cli_confirm;
 
 #[derive(Parser)]
@@ -90,10 +91,10 @@ enum VoiceCommand {
     List(Storage),
     /// List the small, pinned catalog available for verified download.
     Available(Storage),
-    /// Download and import one voice from the pinned catalog.
+    /// Download and import one or more voices from the pinned catalog.
     Install {
-        /// ID reported by `voices available`.
-        catalog_id: String,
+        /// Catalog IDs, list numbers, or numeric ranges. Omit for an interactive chooser.
+        selections: Vec<String>,
         /// Override the installed voice ID.
         #[arg(long)]
         id: Option<String>,
@@ -235,83 +236,94 @@ async fn run() -> Result<(), String> {
                 let installed = store(storage)?
                     .voice_catalog()
                     .map_err(public_store_error)?;
-                for voice in CURATED_VOICES {
-                    let is_installed = installed.iter().any(|item| {
-                        item["id"] == voice.id
-                            || (item["source"]["repository"] == voice.repository
-                                && item["source"]["revision"] == voice.revision
-                                && item["source"]["path"] == voice.path)
-                    });
-                    let mut descriptor = serde_json::to_value(voice)
-                        .map_err(|_| "could not encode curated voice descriptor".to_owned())?;
-                    descriptor["status"] = if is_installed {
-                        serde_json::Value::String("installed".to_owned())
-                    } else {
-                        serde_json::Value::String("available".to_owned())
-                    };
-                    println!(
-                        "{}",
-                        serde_json::to_string(&descriptor)
-                            .map_err(|_| "could not encode curated voice descriptor".to_owned())?
-                    );
-                }
-                Ok(())
+                cli_catalog::print_available(
+                    CURATED_VOICES,
+                    &curated_installed_state(CURATED_VOICES, &installed),
+                )
             }
             VoiceCommand::Install {
-                catalog_id,
+                selections,
                 id,
                 mut accepted,
                 yes,
                 storage,
             } => {
-                let voice = curated_voice_by_id(&catalog_id)
-                    .ok_or_else(|| "unknown curated voice ID".to_owned())?;
-                let id = id.unwrap_or_else(|| voice.id.to_owned());
-                println!("Plan: download and import voice:{id}");
-                println!("Catalog voice: {} ({})", voice.name, voice.id);
-                println!(
-                    "Source: https://huggingface.co/{}/blob/{}/{}",
-                    voice.repository, voice.revision, voice.path
-                );
-                println!("Attribution: {}", voice.attribution);
-                println!(
-                    "License: {CURATED_LICENSE_NAME} ({CURATED_LICENSE_ID}) {CURATED_LICENSE_URL}"
-                );
-                cli_confirm::curated_voice_install(&mut accepted, yes)?;
                 let store = store(storage)?;
-                let cancellation = cancellation_on_ctrl_c();
-                let staged = download_voice(
-                    curated_download_url(voice),
-                    store.cache_dir(),
-                    Some(ExpectedDownload {
-                        bytes: voice.bytes,
-                        sha256: voice.sha256,
-                    }),
-                    cancellation.clone(),
-                    warn_large_input,
-                )
-                .await
-                .map_err(|error| error.to_string())?;
-                let provenance = VoiceProvenance {
-                    kind: "curated".to_owned(),
-                    name: voice.name.to_owned(),
-                    source_url: curated_download_url(voice).to_string(),
-                    repository: voice.repository.to_owned(),
-                    revision: voice.revision.to_owned(),
-                    path: voice.path.to_owned(),
-                    license_id: voice.license_id.to_owned(),
-                    license_url: voice.license_url.to_owned(),
-                    attribution: voice.attribution.to_owned(),
+                let installed = store.voice_catalog().map_err(public_store_error)?;
+                let installed_state = curated_installed_state(CURATED_VOICES, &installed);
+                let selected = if selections.is_empty() {
+                    cli_catalog::choose_interactively(CURATED_VOICES, &installed_state)?
+                } else {
+                    cli_catalog::resolve_selections(&selections, CURATED_VOICES)?
                 };
-                import_voice_path(
-                    store,
-                    staged.path().to_owned(),
-                    id.clone(),
-                    Some(provenance),
-                    cancellation,
-                )
-                .await?;
-                println!("installed: voice:{id}");
+                if id.is_some() && selected.len() != 1 {
+                    return Err("--id can only be used when installing one voice".to_owned());
+                }
+                let targets: Vec<_> = selected
+                    .iter()
+                    .map(|voice| {
+                        let installed_id = id.clone().unwrap_or_else(|| voice.id.to_owned());
+                        (*voice, installed_id)
+                    })
+                    .collect();
+                println!("Plan: download and import {} voice(s)", targets.len());
+                for (voice, installed_id) in &targets {
+                    println!(
+                        "- {} ({}) -> voice:{} [{}]",
+                        voice.name, voice.id, installed_id, voice.license_id
+                    );
+                    println!(
+                        "  Source: https://huggingface.co/{}/blob/{}/{}",
+                        voice.repository, voice.revision, voice.path
+                    );
+                    println!("  Attribution: {}", voice.attribution);
+                }
+                let licenses = selected_licenses(&selected)?;
+                println!("Licenses:");
+                for license in &licenses {
+                    println!("- {} ({}) {}", license.name, license.id, license.url);
+                    println!("  {}", license.notice);
+                }
+                cli_confirm::curated_voice_install(&licenses, &mut accepted, yes)?;
+                let cancellation = cancellation_on_ctrl_c();
+                let mut downloads = Vec::with_capacity(targets.len());
+                for (voice, installed_id) in targets {
+                    let staged = download_voice(
+                        curated_download_url(voice),
+                        store.cache_dir(),
+                        Some(ExpectedDownload {
+                            bytes: voice.bytes,
+                            sha256: voice.sha256,
+                        }),
+                        cancellation.clone(),
+                        warn_large_input,
+                    )
+                    .await
+                    .map_err(|error| error.to_string())?;
+                    downloads.push((voice, installed_id, staged));
+                }
+                for (voice, installed_id, staged) in downloads {
+                    let provenance = VoiceProvenance {
+                        kind: "curated".to_owned(),
+                        name: voice.name.to_owned(),
+                        source_url: curated_download_url(voice).to_string(),
+                        repository: voice.repository.to_owned(),
+                        revision: voice.revision.to_owned(),
+                        path: voice.path.to_owned(),
+                        license_id: voice.license_id.to_owned(),
+                        license_url: voice.license_url.to_owned(),
+                        attribution: voice.attribution.to_owned(),
+                    };
+                    import_voice_path(
+                        store.clone(),
+                        staged.path().to_owned(),
+                        installed_id.clone(),
+                        Some(provenance),
+                        cancellation.clone(),
+                    )
+                    .await?;
+                    println!("installed: voice:{installed_id}");
+                }
                 Ok(())
             }
             VoiceCommand::Import {
@@ -381,6 +393,37 @@ fn store(storage: Storage) -> Result<Store, String> {
 
 fn public_store_error(error: impl std::fmt::Display) -> String {
     error.to_string()
+}
+
+fn curated_installed_state(voices: &[CuratedVoice], installed: &[serde_json::Value]) -> Vec<bool> {
+    voices
+        .iter()
+        .map(|voice| {
+            installed.iter().any(|item| {
+                item["id"] == voice.id
+                    || (item["source"]["repository"] == voice.repository
+                        && item["source"]["revision"] == voice.revision
+                        && item["source"]["path"] == voice.path)
+            })
+        })
+        .collect()
+}
+
+fn selected_licenses(selected: &[&CuratedVoice]) -> Result<Vec<CuratedLicense>, String> {
+    let mut licenses = Vec::new();
+    for voice in selected {
+        if licenses
+            .iter()
+            .any(|license: &CuratedLicense| license.id == voice.license_id)
+        {
+            continue;
+        }
+        licenses.push(
+            curated_license_by_id(voice.license_id)
+                .ok_or_else(|| "curated voice has an unknown license".to_owned())?,
+        );
+    }
+    Ok(licenses)
 }
 
 fn absolute_path(path: PathBuf) -> Result<PathBuf, String> {

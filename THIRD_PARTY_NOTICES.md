@@ -40,7 +40,8 @@ and conditions include:
 - Model card and acceptable-use conditions: <https://huggingface.co/kyutai/pocket-tts>
 - Optional reference-voice repository: <https://huggingface.co/kyutai/tts-voices>
   (recording licenses and attribution requirements vary by collection; the
-  provider's pinned Voice-Zero subset is identified as CC0 by Kyutai)
+  provider pins Voice-Zero under CC0, Alba MacKenna and VCTK under CC BY 4.0,
+  and Expresso under non-commercial CC BY-NC 4.0, as identified by Kyutai)
 - ONNX conversion: <https://github.com/KevinAHM/pocket-tts-onnx-export>
 - Converted archive license: CC-BY-4.0
 - Converted archive README notice: “It is for non-commercial.”
