@@ -45,6 +45,32 @@ INT8 model, two threads, one warmup, and five measured runs. Engine creation was
 factor was 0.135 for 5.2 seconds of output. The input was a generated synthetic
 reference suitable for validating timing and determinism, not voice quality.
 
+The provider-neutral `utterpipe-benchmark` prototype was then run on the same
+Apple M4 host with two warmups, ten measured runs, and the same 60-code-point
+text. RSS is the direct provider process sampled every 20 ms; its peak is a
+lower bound. Byte sizes are logical file sizes.
+
+| Provider / delivery | Initialize | First audio p50 / p95 | Completion p50 / p95 | RTF p50 / p95 | Steady / sampled-peak RSS | Executable | Provider data | Cache |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| eSpeak NG complete WAV | 22 ms | Not available | 15.9 / 17.0 ms | 0.00505 / 0.00540 | 4.39 / 4.77 MB | 20.28 MB | 0 | 18.46 MB |
+| Pocket complete WAV | 605 ms | Not available | 690 / 709 ms | 0.1328 / 0.1363 | 670.61 / 671.61 MB | 22.49 MB | 198.55 MB | 98.34 MB |
+| Pocket incremental PCM | 590 ms | 491 / 518 ms | 694 / 727 ms | 0.1334 / 0.1397 | 669.04 / 670.48 MB | 22.49 MB | 198.55 MB | 98.34 MB |
+
+The generic Pocket incremental result closely matches the internal harness:
+491 versus 498 ms first audio, 694 versus 702 ms completion, and 0.133 versus
+0.135 RTF. This is evidence that protocol framing and the sampler do not
+materially distort this workload. The large approximately 670 MB resident
+footprint is a more important engine-selection result than the 22.5 MB provider
+executable. Provider data contains the installed model and normalized synthetic
+voice; the separately removable cache contains the downloaded model archive.
+
+Two after-first-audio Pocket cancellation attempts were both accepted. Median
+acknowledgement was 0.056 ms and terminal cleanup was 62.1 ms after the request,
+with zero audio frames observed after acknowledgement. Two zero-delay eSpeak
+cancellations were also accepted; median acknowledgement was 0.089 ms and
+terminal cleanup was 0.308 ms. These cancellation trials measure control and
+cleanup behavior, not voice quality.
+
 ## Candidate set
 
 | Runtime | Role in evaluation | Three-platform evidence | Deployment concern |
