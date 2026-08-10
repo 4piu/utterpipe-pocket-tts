@@ -22,9 +22,14 @@ The provider executable **does not bundle the model or a voice**:
 - The provider stores the model and imported reference locally. It does not
   upload or publish imported voices.
 
-The current model is English-only. Plan on an approximately 98 MB download,
-198 MB of installed model files, one interactive setup, and a suitable
-reference recording before expecting synthesis to work.
+The current model is English-only. The model determines which language can be
+spoken; a reference WAV supplies the speaker, accent, and style but does not add
+a language to the model. For best results, match the reference recording to the
+model language. Current upstream Pocket TTS offers separate language-specific
+models, while this provider supports only the pinned English sherpa-onnx
+conversion. Plan on an approximately 98 MB download, 198 MB of installed model
+files, one interactive setup, and a suitable reference recording before
+expecting synthesis to work.
 
 ## Quick start with Agent Speak
 
