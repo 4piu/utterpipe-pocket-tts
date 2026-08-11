@@ -114,6 +114,7 @@ WAV. Each reconstructed eSpeak cache contained 18.46 MB across 515 files.
 | Runtime | Role in evaluation | Three-platform evidence | Deployment concern |
 | --- | --- | --- | --- |
 | Current sherpa-onnx 1.13.4 | Released CPU baseline | Real incremental synthesis and cancellation now pass on Windows, macOS, and Linux | Proven static cross-platform integration; output is not acoustically reproducible across hosts |
+| `xn-ptts` / XN | Native Rust candidate | Upstream CI builds on Windows, macOS, and Linux; real synthesis is verified on macOS and still pending on the other two hosts | Small, direct safetensors/GGUF runtime with useful step APIs; community implementation and model-generation coverage still need release-level validation |
 | `audio.cpp` Pocket implementation | Native candidate | Documents native Windows, macOS, and Linux builds | Large fast-moving multi-model GGML runtime; evaluate a Pocket-only composite build |
 | `PocketTTS.cpp` | Compact native candidate | Documents Windows, macOS, and Linux CMake builds | Attractive C FFI and streaming surface, but model-generation coverage must be proven after engine selection |
 
@@ -128,6 +129,60 @@ Do not add a community model repository or promise a model catalog for a
 candidate engine before the engine decision. Once the runtime is selected,
 choose only model artifacts whose architecture, tokenizer, voice state, license,
 integrity, and output have been verified with that exact runtime.
+
+### XN Pocket TTS probe
+
+The first XN evaluation pins `xn-ptts` commit
+`4398678425e1b3d48d525024257830aec989bc58`, its `ptts` 0.2.2 package, and
+`xn` 0.1.21. The runtime loads Kyutai's official January 2026 safetensors
+directly. Its native quantizer applies Q8_0 only to FlowLM transformer attention
+and FFN projections; it does not use PocketTTS.cpp's rejected broad ONNX MatMul
+quantization. The benchmark implementation and exact lockfile are under
+[`experiments/xn-ptts`](../experiments/xn-ptts/README.md).
+
+The runtime experiment prepares the consented Voice-Zero Caro Davy reference as
+a 434,296-byte voice state before starting synthesis. It then omits the Mimi
+encoder from the runtime GGUF, keeps one conditioned base state warm, pipelines
+autoregressive generation into a bounded two-frame decoder queue, and checks
+cancellation between frames. This is a viable provider design: WAV import can
+perform the expensive voice preparation once, while ordinary synthesis loads
+only the voice state. It still requires a recovery path if a model update makes
+an existing state incompatible.
+
+The initial Apple M4 comparison used the same natural reference, 60-code-point
+text, seed 42, two warmups, ten measured iterations, and each runtime's best
+tested CPU thread count. RTF is the meaningful completion comparison because
+the engines produced different durations: 3.76 seconds for XN and 3.20 seconds
+for sherpa. XN's GGUF loader is memory-mapped, so its load timing does not imply
+that every model page was faulted during initialization; peak RSS includes the
+subsequent warmups and measurements.
+
+| Runtime | Threads | Load | Voice-state prompt | First audio p50 / p95 | Completion p50 / p95 | RTF p50 / p95 | Native peak RSS | Runtime model |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| XN Q8_0 | 4 | 24 ms | 47 ms | 21.6 / 22.3 ms | 390 / 400 ms | 0.1037 / 0.1063 | 246.42 MB | 129.72 MB |
+| XN Q8_0 | 2 | 64 ms | 68 ms | 24.8 / 25.1 ms | 424 / 430 ms | 0.1127 / 0.1143 | 242.93 MB | 129.72 MB |
+| XN unquantized f32 compute | 2 | 330 ms | 112 ms | 48.5 / 66.7 ms | 636 / 653 ms | 0.1692 / 0.1738 | 662.65 MB | 235.74 MB |
+| sherpa-onnx INT8 | 2 | 297 ms | Included in synthesis | 341 / 351 ms | 445 / 458 ms | 0.1392 / 0.1430 | 653.74 MB | 198.55 MB |
+
+Four XN workers were the best M4 operating point tested. One worker produced
+0.1498 median RTF, two produced 0.1127, four produced 0.1037, and six regressed
+to 0.1161. Sherpa also regressed with four workers. XN Q8 output was
+byte-identical across fresh one-, two-, four-, and six-worker processes and
+across all ten measured iterations. Two after-first-audio stops at each tested
+thread count retained exactly one 80 ms PCM frame; with four workers, the
+direct engine loop stopped in 27.6--27.9 ms from synthesis start. These are
+engine-loop results, not yet the race and acknowledgement guarantees of an
+UtterPipe adapter.
+
+The six-case PocketTTS.cpp regression corpus was regenerated through both XN
+Q8 and XN unquantized execution. The provisional FP32-relative overlay detector
+passed every case, including `runtime`, numbers and punctuation, and the longer
+message. Q8/FP32 high-frequency ratios ranged from 1.01 through 2.21; the
+separate benchmark sentence measured 4.38 and also remained below the known
+failure threshold. This is promising regression evidence, not an intelligibility
+or perceptual-quality certification. Human listening, broader text/voice/seed
+coverage, ASR/perceptual metrics, and real Windows and Linux synthesis remain
+selection gates.
 
 ## Artifact observations
 
