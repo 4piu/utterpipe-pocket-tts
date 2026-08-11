@@ -288,6 +288,20 @@ adapter. Human listening, broader text/voice/seed coverage, long-text sentence
 splitting, ASR/perceptual metrics, and protocol conformance remain release
 selection gates.
 
+An experimental provider-side engine adapter now pins project-fork commit
+`4dbd8d6832cf4e093d08a1bd4666a08783345e7b` beside the released sherpa
+adapter. It loads the April Q8 GGUF, a pure-Rust tokenizer JSON conversion, and
+one prepared XN voice state; keeps the conditioned TTS and Mimi decoder states
+warm; sentence-splits input into at most 50-token chunks; and connects
+generation to decoding with a bounded two-frame queue. The ignored real-model
+test passed normal multi-frame streaming, exact byte/digest accounting, a
+one-byte output rejection, and cancel-after-first-frame using the same warm
+engine. Ordinary tests and strict Clippy also pass with both engines compiled
+into the provider. This is deliberately not wired into the UtterPipe protocol
+yet: bundle preparation, store leases, cancellation acknowledgement ordering,
+zero post-acknowledgement audio, and cross-platform provider-level tests remain
+promotion gates.
+
 ## Artifact observations
 
 Public Hugging Face metadata at revision
