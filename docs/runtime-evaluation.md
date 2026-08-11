@@ -114,7 +114,7 @@ WAV. Each reconstructed eSpeak cache contained 18.46 MB across 515 files.
 | Runtime | Role in evaluation | Three-platform evidence | Deployment concern |
 | --- | --- | --- | --- |
 | Current sherpa-onnx 1.13.4 | Released CPU baseline | Real incremental synthesis and cancellation now pass on Windows, macOS, and Linux | Proven static cross-platform integration; output is not acoustically reproducible across hosts |
-| `xn-ptts` / XN | Native Rust candidate | Upstream CI builds on Windows, macOS, and Linux; real synthesis is verified on macOS and still pending on the other two hosts | Small, direct safetensors/GGUF runtime with useful step APIs; community implementation and model-generation coverage still need release-level validation |
+| `xn-ptts` / XN | Native Rust candidate | Real synthesis, bounded engine-loop streaming, and prompt stop behavior pass on Windows, macOS, and Linux | Direct safetensors/GGUF runtime with a strong Q8 memory profile; community implementation, long-text behavior, and model-generation coverage still need release-level validation |
 | `audio.cpp` Pocket implementation | Native candidate | Documents native Windows, macOS, and Linux builds | Large fast-moving multi-model GGML runtime; evaluate a Pocket-only composite build |
 | `PocketTTS.cpp` | Compact native candidate | Documents Windows, macOS, and Linux CMake builds | Attractive C FFI and streaming surface, but model-generation coverage must be proven after engine selection |
 
@@ -161,7 +161,7 @@ subsequent warmups and measurements.
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | XN Q8_0 | 4 | 24 ms | 47 ms | 21.6 / 22.3 ms | 390 / 400 ms | 0.1037 / 0.1063 | 246.42 MB | 129.72 MB |
 | XN Q8_0 | 2 | 64 ms | 68 ms | 24.8 / 25.1 ms | 424 / 430 ms | 0.1127 / 0.1143 | 242.93 MB | 129.72 MB |
-| XN unquantized f32 compute | 2 | 330 ms | 112 ms | 48.5 / 66.7 ms | 636 / 653 ms | 0.1692 / 0.1738 | 662.65 MB | 235.74 MB |
+| XN unquantized f32 compute | 4 | 42 ms | 77 ms | 42.6 / 47.1 ms | 627 / 649 ms | 0.1667 / 0.1725 | 667.45 MB | 235.74 MB |
 | sherpa-onnx INT8 | 2 | 297 ms | Included in synthesis | 341 / 351 ms | 445 / 458 ms | 0.1392 / 0.1430 | 653.74 MB | 198.55 MB |
 
 Four XN workers were the best M4 operating point tested. One worker produced
@@ -174,14 +174,61 @@ direct engine loop stopped in 27.6--27.9 ms from synthesis start. These are
 engine-loop results, not yet the race and acknowledgement guarantees of an
 UtterPipe adapter.
 
+The same XN harness and assets were then built from isolated checkouts on both
+x86 development hosts. The table compares XN profiles only: every row uses the
+same natural prepared voice state, text, seed, two warmups, and ten measured
+runs. Thread counts are the best operating points observed in the bounded
+sweep, rather than a universal default.
+
+| Host / profile | Threads | First audio p50 / p95 | Completion p50 / p95 | RTF p50 / p95 | Native peak RSS | Runtime model |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Apple M4 macOS, Q8_0 | 4 | 21.6 / 22.3 ms | 390 / 400 ms | 0.1037 / 0.1063 | 246.42 MB | 129.72 MB |
+| Apple M4 macOS, f32 | 4 | 42.6 / 47.1 ms | 627 / 649 ms | 0.1667 / 0.1725 | 667.45 MB | 235.74 MB |
+| Windows 11, Ryzen 7 9800X3D, Q8_0 | 8 | 112 / 121 ms | 564 / 585 ms | 0.1500 / 0.1556 | 233.07 MB | 129.72 MB |
+| Windows 11, Ryzen 7 9800X3D, f32 | 4 | 28.5 / 34.9 ms | 373 / 381 ms | 0.0992 / 0.1013 | 652.42 MB | 235.74 MB |
+| Manjaro Linux, Core i9-12900K, Q8_0 | 8 | 135 / 145 ms | 706 / 720 ms | 0.1877 / 0.1915 | 238.68 MB | 129.72 MB |
+| Manjaro Linux, Core i9-12900K, f32 | 4 | 38.9 / 42.3 ms | 701 / 736 ms | 0.1863 / 0.1958 | 657.63 MB | 235.74 MB |
+
+Q8 is the clear speed-and-memory choice on Apple Silicon. On both x86 hosts,
+unquantized f32 reduces first-audio latency substantially and is at least as
+fast in completion throughput, while Q8 saves approximately 419 MB of peak RSS.
+The provider should therefore expose a quality/performance profile and choose
+platform-aware defaults only after the protocol-level benchmark is complete.
+The best tested worker count is four for f32 on all three hosts, four for Q8 on
+the M4, and eight for Q8 on both x86 hosts. A production default should derive
+from topology or a conservative platform rule; it must not assume that more
+logical CPUs always help.
+
 The six-case PocketTTS.cpp regression corpus was regenerated through both XN
-Q8 and XN unquantized execution. The provisional FP32-relative overlay detector
-passed every case, including `runtime`, numbers and punctuation, and the longer
-message. Q8/FP32 high-frequency ratios ranged from 1.01 through 2.21; the
-separate benchmark sentence measured 4.38 and also remained below the known
-failure threshold. This is promising regression evidence, not an intelligibility
-or perceptual-quality certification. Human listening, broader text/voice/seed
-coverage, ASR/perceptual metrics, and real Windows and Linux synthesis remain
+Q8 and XN unquantized execution on macOS. The provisional FP32-relative overlay
+detector passed every case, including `runtime`, numbers and punctuation, and
+the longer message. Q8/FP32 high-frequency ratios ranged from 1.01 through
+2.21; the separate benchmark sentence measured 4.38. Platform-local benchmark
+comparisons also passed at 1.80 on Windows and 1.85 on Linux, all below the
+known failure threshold of 20. This is promising severe-artifact regression
+evidence, not an intelligibility or perceptual-quality certification.
+
+At a fixed seed, each host produced byte-identical PCM across its own repeated
+runs and thread sweep. PCM hashes differed across hosts, so XN must not promise
+cross-platform acoustic reproducibility. Every after-first-frame engine stop
+completed promptly. These stops still lack UtterPipe acknowledgement and
+post-acknowledgement framing guarantees; those belong to the adapter test.
+
+Additional M4 quantization probes showed why quantized profiles need acoustic
+and performance gates rather than a size-only ranking:
+
+| XN profile | Runtime model | First audio p50 / p95 | RTF p50 / p95 | Native peak RSS | Artifact probe |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Q8_0 | 129.72 MB | 21.6 / 22.3 ms | 0.1037 / 0.1063 | 246.42 MB | Passed |
+| Q6_K | 111.44 MB | 60.7 / 72.6 ms | 0.2008 / 0.2255 | 228.52 MB | Passed; slower than Q8_0 |
+| Q4_K | 91.97 MB | 52.8 / 59.1 ms | 0.1922 / 0.1966 | 205.41 MB | Failed with severe high-frequency overlay artifacts |
+
+Q4_K is rejected for this model generation. Q6_K is not a sensible default
+because its modest memory saving costs roughly twice Q8's completion time, but
+it can remain an experimental low-memory profile if broader listening passes.
+XN now clears the three-platform engine-probe gate for a bounded UtterPipe
+adapter. Human listening, broader text/voice/seed coverage, long-text sentence
+splitting, ASR/perceptual metrics, and protocol conformance remain release
 selection gates.
 
 ## Artifact observations
