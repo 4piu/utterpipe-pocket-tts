@@ -174,6 +174,11 @@ after-first-audio stops per profile retained exactly one 80 ms frame. The saved
 matched listening pair remains a human acceptance gate before this model or its
 Q8 conversion enters the quick-start catalog.
 
+Listener acceptance on 2026-08-10 passed both April Q8 and f32 samples without
+an audible quality or artifact failure. Q8 is therefore the leading
+quick-start runtime profile for this model generation; provider-level protocol,
+bundle, and cross-platform release gates still apply.
+
 The runtime experiment prepares the consented Voice-Zero Caro Davy reference as
 a 434,296-byte voice state before starting synthesis. It then omits the Mimi
 encoder from the runtime GGUF, keeps one conditioned base state warm, pipelines
