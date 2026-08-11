@@ -302,6 +302,21 @@ yet: bundle preparation, store leases, cancellation acknowledgement ordering,
 zero post-acknowledgement audio, and cross-platform provider-level tests remain
 promotion gates.
 
+For bootstrap, retaining the April Mimi voice encoder in the Q8 GGUF increases
+the model from 128,741,024 bytes to 148,242,752 bytes. The full evaluation GGUF
+has SHA-256
+`a9548b363f990faca0614dc0533d80b11be80ad0b6ac781b6f42a58dd1659ece`.
+It recreated the Caro Davy state byte-for-byte from the original 44.1 kHz WAV
+(434,296 bytes, SHA-256
+`596be2ac4d1faef704ded1f98c3f639c8a5e2027f91e063fefd0d82d2f35cec9`),
+and the adapter synthesized successfully from that recreated state. The
+provider-side preparation path mirrors upstream PCM scaling, loudness
+normalization, resampling, ten-second trimming, and model-generation metadata.
+This supports one self-contained quick-start bundle for both voice import and
+ordinary inference instead of requiring users to retain separate f32 encoder
+weights. These hashes describe local evaluation artifacts, not a published
+catalog entry.
+
 ## Artifact observations
 
 Public Hugging Face metadata at revision

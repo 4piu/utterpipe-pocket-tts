@@ -18,20 +18,147 @@ use std::{
 use ptts::{
     Tokenizer,
     mimi::MimiDecoderState,
-    tts_model::{TTSConfig, TTSModel, TTSState},
+    tts_model::{MimiEnc, TTSConfig, TTSModel, TTSState},
 };
 use rand::SeedableRng;
+use rubato::Resampler;
 use sha2::{Digest, Sha256};
-use xn::{BackendQ, Tensor, nn::VB, quantized::Q80F32};
+use xn::{BackendQ, Tensor, Unquantized, nn::VB, quantized::Q80F32};
 
 use crate::{
     audio,
+    audio::ReferenceAudio,
     engine::{EngineError, GenerationOptions, GenerationSummary, SAMPLE_RATE},
 };
 
 const MAX_CHUNK_TOKENS: usize = 50;
 const STATE_SEQUENCE_CAPACITY: usize = 1_024;
 const PIPELINE_CAPACITY: usize = 2;
+const RESAMPLE_CHUNK_FRAMES: usize = 1_024;
+
+pub struct XnVoiceEncoder {
+    encoder: MimiEnc<Unquantized<f32, xn::CpuDevice>>,
+    sample_rate: u32,
+    maximum_audio_seconds: f32,
+    model_extension: String,
+}
+
+impl XnVoiceEncoder {
+    /// Load the voice encoder from a full XN GGUF bundle.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable error if the bundle is unavailable, incompatible, or
+    /// advertises unsafe prompt bounds.
+    pub fn create(
+        config_path: &Path,
+        model_path: &Path,
+        num_threads: u32,
+    ) -> Result<Self, EngineError> {
+        if !(1..=64).contains(&num_threads)
+            || model_path.extension().and_then(|value| value.to_str()) != Some("gguf")
+        {
+            return Err(EngineError::InvalidOptions);
+        }
+        if !config_path.is_file() || !model_path.is_file() {
+            return Err(EngineError::Unavailable);
+        }
+        xn::set_num_threads(num_threads as usize);
+        let config: TTSConfig = serde_json::from_reader(BufReader::new(
+            File::open(config_path).map_err(|_| EngineError::Unavailable)?,
+        ))
+        .map_err(|_| EngineError::Unavailable)?;
+        let sample_rate =
+            u32::try_from(config.mimi.sample_rate).map_err(|_| EngineError::Unavailable)?;
+        if sample_rate != SAMPLE_RATE
+            || !config.audio_prompt_max_duration.is_finite()
+            || !(1.0..=30.0).contains(&config.audio_prompt_max_duration)
+        {
+            return Err(EngineError::Unavailable);
+        }
+        // The official April config leaves `model_id` unset. Match the
+        // upstream voice-preparation tool's informational fallback; the
+        // provider bundle manifest remains the authoritative compatibility
+        // token.
+        let model_extension = config.model_ext().unwrap_or_else(|| "unknown".to_owned());
+        let reader = BufReader::new(File::open(model_path).map_err(|_| EngineError::Unavailable)?);
+        let weights = VB::load_gguf_with_key_map(reader, xn::CPU, remap_key)
+            .map_err(|_| EngineError::Unavailable)?;
+        let encoder = MimiEnc::<Unquantized<f32, xn::CpuDevice>>::load(&weights.root(), &config)
+            .map_err(|_| EngineError::Unavailable)?;
+        Ok(Self {
+            encoder,
+            sample_rate,
+            maximum_audio_seconds: config.audio_prompt_max_duration,
+            model_extension,
+        })
+    }
+
+    /// Prepare a compact voice state from already validated mono PCM16 audio.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable cancellation, I/O, or inference error. Callers should
+    /// write into private staging and publish the state atomically.
+    pub fn prepare_voice(
+        &self,
+        reference: &ReferenceAudio,
+        output_path: &Path,
+        cancellation: &AtomicBool,
+    ) -> Result<(), EngineError> {
+        check_cancelled(cancellation)?;
+        let minimum_samples =
+            usize::try_from(reference.sample_rate).map_err(|_| EngineError::InvalidOptions)?;
+        let maximum_samples = minimum_samples
+            .checked_mul(30)
+            .ok_or(EngineError::InvalidOptions)?;
+        if !(16_000..=48_000).contains(&reference.sample_rate)
+            || !(minimum_samples..=maximum_samples).contains(&reference.samples.len())
+        {
+            return Err(EngineError::InvalidOptions);
+        }
+        let mut samples: Vec<f32> = reference
+            .samples
+            .iter()
+            .map(|sample| f32::from(*sample) / 32_768.0)
+            .collect();
+        ptts::utils::normalize_loudness(&mut samples, reference.sample_rate)
+            .map_err(|_| EngineError::Failed)?;
+        check_cancelled(cancellation)?;
+        if reference.sample_rate != self.sample_rate {
+            samples = resample(
+                &samples,
+                reference.sample_rate,
+                self.sample_rate,
+                cancellation,
+            )?;
+        }
+        let sample_limit =
+            (f64::from(self.sample_rate) * f64::from(self.maximum_audio_seconds)).floor() as usize;
+        samples.truncate(sample_limit);
+        if samples.is_empty() {
+            return Err(EngineError::Failed);
+        }
+        check_cancelled(cancellation)?;
+        let audio = Tensor::from_vec(samples, (1, 1, ()), &xn::CPU)
+            .and_then(|value| value.to::<f32>())
+            .map_err(|_| EngineError::Failed)?;
+        let voice = self
+            .encoder
+            .encode_audio(&audio)
+            .map_err(|_| EngineError::Failed)?;
+        check_cancelled(cancellation)?;
+        let tensors =
+            std::collections::HashMap::from([("emb".to_owned(), xn::TypedTensor::F32(voice))]);
+        let metadata = std::collections::HashMap::from([(
+            "model_ext".to_owned(),
+            self.model_extension.clone(),
+        )]);
+        xn::safetensors::save_with_data_info(&tensors, Some(metadata), output_path)
+            .map_err(|_| EngineError::Failed)?;
+        check_cancelled(cancellation)
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct XnModelBehavior {
@@ -482,6 +609,56 @@ fn check_stop(
     } else {
         Ok(())
     }
+}
+
+fn check_cancelled(cancellation: &AtomicBool) -> Result<(), EngineError> {
+    if cancellation.load(Ordering::Acquire) {
+        Err(EngineError::Cancelled)
+    } else {
+        Ok(())
+    }
+}
+
+fn resample(
+    input: &[f32],
+    input_rate: u32,
+    output_rate: u32,
+    cancellation: &AtomicBool,
+) -> Result<Vec<f32>, EngineError> {
+    let input_rate = usize::try_from(input_rate).map_err(|_| EngineError::Failed)?;
+    let output_rate = usize::try_from(output_rate).map_err(|_| EngineError::Failed)?;
+    let expected = input
+        .len()
+        .checked_mul(output_rate)
+        .and_then(|value| value.checked_div(input_rate))
+        .and_then(|value| value.checked_add(RESAMPLE_CHUNK_FRAMES))
+        .ok_or(EngineError::OutputTooLarge)?;
+    let mut output = Vec::new();
+    output
+        .try_reserve_exact(expected)
+        .map_err(|_| EngineError::OutputTooLarge)?;
+    let mut resampler =
+        rubato::FftFixedInOut::<f32>::new(input_rate, output_rate, RESAMPLE_CHUNK_FRAMES, 1)
+            .map_err(|_| EngineError::Failed)?;
+    let mut buffer = resampler.output_buffer_allocate(true);
+    let mut position = 0;
+    while position + resampler.input_frames_next() < input.len() {
+        check_cancelled(cancellation)?;
+        let (consumed, produced) = resampler
+            .process_into_buffer(&[&input[position..]], &mut buffer, None)
+            .map_err(|_| EngineError::Failed)?;
+        position += consumed;
+        output.extend_from_slice(&buffer[0][..produced]);
+    }
+    if position < input.len() {
+        check_cancelled(cancellation)?;
+        let (_, produced) = resampler
+            .process_partial_into_buffer(Some(&[&input[position..]]), &mut buffer, None)
+            .map_err(|_| EngineError::Failed)?;
+        output.extend_from_slice(&buffer[0][..produced]);
+    }
+    check_cancelled(cancellation)?;
+    Ok(output)
 }
 
 fn load_voice(path: &Path) -> xn::Result<Tensor<<Q80F32 as BackendQ>::T, xn::CpuDevice>> {

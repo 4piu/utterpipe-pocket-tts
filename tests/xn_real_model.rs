@@ -9,8 +9,9 @@ use std::{
 
 use sha2::{Digest, Sha256};
 use utterpipe_pocket_tts::{
+    audio,
     engine::{EngineError, GenerationOptions},
-    xn_engine::{XnModelBehavior, XnPocketEngine},
+    xn_engine::{XnModelBehavior, XnPocketEngine, XnVoiceEncoder},
 };
 
 fn fixture(name: &str) -> PathBuf {
@@ -19,13 +20,13 @@ fn fixture(name: &str) -> PathBuf {
         .unwrap_or_else(|| panic!("set {name} to an absolute fixture path"))
 }
 
-fn engine() -> Arc<XnPocketEngine> {
+fn engine(voice_state: &std::path::Path) -> Arc<XnPocketEngine> {
     Arc::new(
         XnPocketEngine::create(
             &fixture("UTTERPIPE_POCKET_XN_CONFIG"),
             &fixture("UTTERPIPE_POCKET_XN_MODEL"),
             &fixture("UTTERPIPE_POCKET_XN_TOKENIZER"),
-            &fixture("UTTERPIPE_POCKET_XN_VOICE_STATE"),
+            voice_state,
             XnModelBehavior::april_2026_english(),
             2,
         )
@@ -43,9 +44,20 @@ fn options(max_audio_bytes: usize) -> GenerationOptions {
 }
 
 #[tokio::test]
-#[ignore = "requires the pinned April XN model, tokenizer, and voice state"]
+#[ignore = "requires the pinned full April XN model, tokenizer, and reference WAV"]
 async fn xn_streams_bounds_and_cancels_with_one_warm_engine() {
-    let engine = engine();
+    let model = fixture("UTTERPIPE_POCKET_XN_MODEL");
+    let config = fixture("UTTERPIPE_POCKET_XN_CONFIG");
+    let reference = audio::read_reference(&fixture("UTTERPIPE_POCKET_XN_REFERENCE"), 30.0)
+        .expect("reference must satisfy the provider import policy");
+    let prepared = tempfile::tempdir().unwrap();
+    let voice_state = prepared.path().join("voice.safetensors");
+    XnVoiceEncoder::create(&config, &model, 2)
+        .unwrap()
+        .prepare_voice(&reference, &voice_state, &AtomicBool::new(false))
+        .unwrap();
+    assert!(voice_state.metadata().unwrap().len() > 0);
+    let engine = engine(&voice_state);
     let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
     let synthesis_engine = Arc::clone(&engine);
     let synthesis = tokio::task::spawn_blocking(move || {

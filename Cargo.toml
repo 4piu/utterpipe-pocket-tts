@@ -19,6 +19,7 @@ ptts = { git = "https://github.com/4piu/xn-ptts", rev = "4dbd8d6832cf4e093d08a1b
 rand = "0.9"
 rand_distr = "0.5"
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "stream", "system-proxy"] }
+rubato = "0.15"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_json_canonicalizer = "0.3"
