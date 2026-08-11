@@ -219,6 +219,13 @@ Q8 profile consistently, but its saved Q8/FP32 pair remains a mandatory human
 listening sample. This demonstrates why the detector needs both relative and
 absolute calibration and cannot replace listening.
 
+Listener acceptance on 2026-08-10 passed every saved XN sample, including the
+matched Q8/f32 outputs from all three operating systems and all four natural
+voices. No noticeable quality difference was heard between XN Q8 and f32. Both
+Bill Boerst profiles add the same leading "ah" before the first word; because
+the behavior is present in the f32 control as well as Q8, it is recorded as a
+voice/model behavior rather than an XN quantization regression.
+
 At a fixed seed, each host produced byte-identical PCM across its own repeated
 runs and thread sweep. PCM hashes differed across hosts, so XN must not promise
 cross-platform acoustic reproducibility. Every after-first-frame engine stop
