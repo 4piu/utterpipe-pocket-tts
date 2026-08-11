@@ -179,6 +179,40 @@ an audible quality or artifact failure. Q8 is therefore the leading
 quick-start runtime profile for this model generation; provider-level protocol,
 bundle, and cross-platform release gates still apply.
 
+The provider-level XN adapter then passed those protocol and platform gates at
+provider commit `d54f4d2be31d4e6930f3ea0ef332b16463bf5f30`, using
+`utterpipe-benchmark` and `utterpipe-conformance` commit
+`2bb8c478fe7457aa0b93075d225577cff65e921d`. Each host imported the same
+manifest-verified full April Q8 bundle through the public direct CLI, imported
+the pinned Caro Davy WAV, and prepared a model-specific voice state. Both
+complete and incremental conformance passed before measurement. The benchmark
+used seed 42, eight threads on x86, two warmups, ten measured utterances, and
+two after-first-audio cancellation attempts. The macOS row uses the
+architecture default of four threads. RSS is sampled direct-provider RSS and
+its peak remains a lower bound.
+
+| Host | Initialize | First audio p50 / p95 | Completion p50 / p95 | RTF p50 / p95 | Steady / sampled-peak RSS | Executable | Installed data |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Apple M4 macOS | 362 ms | 23.6 / 34.3 ms | 483 / 500 ms | 0.1059 / 0.1097 | 278.90 / 279.25 MB | 27.63 MB | 149.67 MB |
+| Windows 11, Ryzen 7 9800X3D | 742 ms | 131.8 / 138.5 ms | 691 / 709 ms | 0.1516 / 0.1555 | 251.65 / 260.58 MB | 32.67 MB | 149.67 MB |
+| Manjaro Linux, Core i9-12900K | 757 ms | 150.1 / 157.5 ms | 857 / 878 ms | 0.1847 / 0.1892 | 296.30 / 369.59 MB | 43.53 MB | 149.67 MB |
+
+All six cancellation attempts were accepted, and no host emitted audio after
+the cancellation acknowledgement. Median acknowledgement / terminal-cleanup
+latency was 0.109 / 6.50 ms on macOS, 0.134 / 9.87 ms on Windows, and 0.155 /
+10.62 ms on Linux. Stores did not grow during measurement and no cache was
+created. The Windows executable imports only Windows system DLLs and no Visual
+C++ runtime; the Linux executable imports only the platform's standard C,
+math, GCC, and C++ runtime libraries.
+
+Seeded PCM was stable across all ten measurements on each host but was not
+byte-identical across operating systems. Windows and macOS produced 4.56
+seconds while Linux produced 4.64 seconds. This is not a protocol defect, but
+it means the release gate must retain platform-local acoustic and listening
+coverage instead of treating one host's digest as universal. The complete
+Windows and Linux versioned reports are retained locally under
+`target/xn-cross-platform/`.
+
 The runtime experiment prepares the consented Voice-Zero Caro Davy reference as
 a 434,296-byte voice state before starting synthesis. It then omits the Mimi
 encoder from the runtime GGUF, keeps one conditioned base state warm, pipelines
