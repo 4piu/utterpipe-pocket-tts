@@ -15,7 +15,7 @@ use clap::{Parser, ValueEnum};
 use ptts::{
     Tokenizer,
     mimi::MimiDecoderState,
-    tts_model::{TTSConfig, TTSModel, TTSState, prepare_text_prompt},
+    tts_model::{TTSConfig, TTSModel, TTSState},
 };
 use rand::SeedableRng;
 use serde::Serialize;
@@ -76,6 +76,15 @@ struct Args {
     /// Sampling temperature.
     #[arg(long, default_value_t = 0.7)]
     temperature: f32,
+    /// Apply the legacy eight-space prefix to inputs shorter than five words.
+    #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+    pad_with_spaces_for_short_inputs: bool,
+    /// Replace semicolons with commas before tokenization.
+    #[arg(long, default_value_t = false, action = clap::ArgAction::Set)]
+    remove_semicolons: bool,
+    /// Model-specific frames added to the text-length EOS heuristic.
+    #[arg(long, default_value_t = 0, value_parser = clap::value_parser!(u32).range(0..=64))]
+    frames_after_eos_offset: u32,
     /// Sampling seed reset before every synthesis.
     #[arg(long, default_value_t = 42)]
     seed: u64,
@@ -190,7 +199,15 @@ where
         .context("tokenizer path is not valid UTF-8")?;
     let tokenizer = SpTokenizer(sentencepiece::SentencePieceProcessor::open(tokenizer_path)?);
 
-    let prepared_text = prepare_text_prompt(&args.text);
+    let prepared_text = prepare_text_prompt(
+        &args.text,
+        args.pad_with_spaces_for_short_inputs,
+        args.remove_semicolons,
+    )?;
+    let frames_after_eos = prepared_text
+        .1
+        .checked_add(args.frames_after_eos_offset as usize)
+        .context("frames-after-EOS setting overflowed")?;
     let tokens = tokenizer.encode(&prepared_text.0)?;
     let max_frames = ((tokens.len() as f64 / 3.0 + 2.0) * 12.5).ceil() as usize;
     let sequence_budget = tokens.len() + 512 + max_frames;
@@ -215,7 +232,7 @@ where
         base_mimi_state,
         tokens,
         max_frames,
-        frames_after_eos: prepared_text.1,
+        frames_after_eos,
         ldim: config.flow_lm.ldim,
         device,
     };
@@ -291,6 +308,10 @@ where
             "text_unicode_scalars": args.text.chars().count(),
             "text_tokens": prepared.tokens.len(),
             "temperature": args.temperature,
+            "pad_with_spaces_for_short_inputs": args.pad_with_spaces_for_short_inputs,
+            "remove_semicolons": args.remove_semicolons,
+            "frames_after_eos_offset": args.frames_after_eos_offset,
+            "effective_frames_after_eos": prepared.frames_after_eos,
             "seed": args.seed,
             "sample_rate_hz": SAMPLE_RATE,
             "pipeline_capacity_frames": 2,
@@ -311,6 +332,39 @@ where
     });
     println!("{}", serde_json::to_string_pretty(&output)?);
     Ok(())
+}
+
+fn prepare_text_prompt(
+    text: &str,
+    pad_with_spaces_for_short_inputs: bool,
+    remove_semicolons: bool,
+) -> Result<(String, usize)> {
+    let mut text = text.trim().replace(['\n', '\r'], " ").replace("  ", " ");
+    if text.is_empty() {
+        bail!("text prompt cannot be empty");
+    }
+    if remove_semicolons {
+        text = text.replace(';', ",");
+    }
+
+    let frames_after_eos = if text.split_whitespace().count() <= 4 {
+        3
+    } else {
+        1
+    };
+    let mut chars = text.chars();
+    if let Some(first) = chars.next()
+        && !first.is_uppercase()
+    {
+        text = first.to_uppercase().to_string() + chars.as_str();
+    }
+    if text.chars().last().is_some_and(char::is_alphanumeric) {
+        text.push('.');
+    }
+    if pad_with_spaces_for_short_inputs && text.split_whitespace().count() < 5 {
+        text = format!("        {text}");
+    }
+    Ok((text, frames_after_eos))
 }
 
 fn synthesize<Q>(
@@ -590,6 +644,23 @@ fn peak_rss_bytes() -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn text_preparation_applies_model_specific_policy() {
+        assert_eq!(
+            prepare_text_prompt("  hello; world  ", false, true).unwrap(),
+            ("Hello, world.".to_owned(), 3)
+        );
+        assert_eq!(
+            prepare_text_prompt("hello world", true, false).unwrap(),
+            ("        Hello world.".to_owned(), 3)
+        );
+    }
+
+    #[test]
+    fn text_preparation_rejects_empty_input() {
+        assert!(prepare_text_prompt(" \n\r ", false, false).is_err());
+    }
 
     #[test]
     fn percentile_uses_nearest_rank() {

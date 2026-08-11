@@ -147,6 +147,32 @@ conditioning while preserving the January path when the configuration field is
 absent or false. The pre- and post-change January Q8 runs produced the identical
 180,480-byte PCM SHA-256
 `359243cf7a0d02984106f49b13002504b19747fe808403729f93b387972d3c9b`.
+Fork commit `4dbd8d6832cf4e093d08a1bd4666a08783345e7b` then adds independently
+configurable Mimi downsample and upsample dimensions. This is required by the
+April 2026 English checkpoint, whose voice-encoding bottleneck is 32 channels
+while its codec and decoder remain 512 channels wide. Omitted dimensions still
+resolve to the legacy width.
+
+The April probe pins official model revision
+`19f95fe2df36e79fbd9f10008595cc4c977a0fcc`. Its 219,029,196-byte
+`model.safetensors` has SHA-256
+`473f47d99560bd50eb8b4509d3cacfe7f316ab20bdca86505403a2e6a936a6e9`.
+The run uses the matching tokenizer, learned voice BOS, 32/512 Mimi bottleneck,
+recommended temperature 0.3, no legacy short-input space padding, and the
+current two-frame addition to the post-EOS heuristic. XN cannot consume the
+official Python KV-cache voice safetensors directly, so it prepared its compact
+434,296-byte state from the exact pinned CC0 Caro Davy WAV instead.
+
+| April M4 profile | Threads | Load | Voice-state prompt | First audio p50 / p95 | Completion p50 / p95 | RTF p50 / p95 | Native peak RSS | Runtime model |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| XN Q8_0 | 2 | 65 ms | 70 ms | 25.2 / 26.2 ms | 432 / 478 ms | 0.1200 / 0.1329 | 244.56 MB | 128.74 MB |
+| XN unquantized f32 compute | 2 | 427 ms | 115 ms | 48.4 / 50.5 ms | 623 / 638 ms | 0.1694 / 0.1734 | 664.73 MB | 219.03 MB |
+
+Both profiles were deterministic across ten measured runs. Q8 generated 3.60
+seconds and f32 generated 3.68 seconds from the same text, voice, and seed. Two
+after-first-audio stops per profile retained exactly one 80 ms frame. The saved
+matched listening pair remains a human acceptance gate before this model or its
+Q8 conversion enters the quick-start catalog.
 
 The runtime experiment prepares the consented Voice-Zero Caro Davy reference as
 a 434,296-byte voice state before starting synthesis. It then omits the Mimi
