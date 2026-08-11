@@ -714,7 +714,7 @@ dependencies = [
 [[package]]
 name = "ptts"
 version = "0.2.2"
-source = "git+https://github.com/LaurentMazare/xn-ptts?rev=4398678425e1b3d48d525024257830aec989bc58#4398678425e1b3d48d525024257830aec989bc58"
+source = "git+https://github.com/4piu/xn-ptts?rev=52493c0fbc9f52916d93df2456fe75ea71da9a58#52493c0fbc9f52916d93df2456fe75ea71da9a58"
 dependencies = [
  "ebur128",
  "rand",

@@ -8,7 +8,7 @@ publish = false
 anyhow = "1.0"
 clap = { version = "4.5", features = ["derive"] }
 libc = "0.2"
-ptts = { git = "https://github.com/LaurentMazare/xn-ptts", rev = "4398678425e1b3d48d525024257830aec989bc58", features = ["sp"] }
+ptts = { git = "https://github.com/4piu/xn-ptts", rev = "52493c0fbc9f52916d93df2456fe75ea71da9a58", features = ["sp"] }
 rand = "0.9"
 rand_distr = "0.5"
 sentencepiece = "0.13"

@@ -140,6 +140,14 @@ and FFN projections; it does not use PocketTTS.cpp's rejected broad ONNX MatMul
 quantization. The benchmark implementation and exact lockfile are under
 [`experiments/xn-ptts`](../experiments/xn-ptts/README.md).
 
+Adapter development subsequently moved to project fork commit
+`52493c0fbc9f52916d93df2456fe75ea71da9a58`, based on that same upstream
+revision. Its only engine change adds opt-in learned BOS-before-voice
+conditioning while preserving the January path when the configuration field is
+absent or false. The pre- and post-change January Q8 runs produced the identical
+180,480-byte PCM SHA-256
+`359243cf7a0d02984106f49b13002504b19747fe808403729f93b387972d3c9b`.
+
 The runtime experiment prepares the consented Voice-Zero Caro Davy reference as
 a 434,296-byte voice state before starting synthesis. It then omits the Mimi
 encoder from the runtime GGUF, keeps one conditioned base state warm, pipelines
