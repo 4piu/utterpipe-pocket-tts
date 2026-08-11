@@ -20,7 +20,11 @@ use ptts::{
 use rand::SeedableRng;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use xn::{BackendQ, Tensor, Unquantized, nn::VB, quantized::Q80F32};
+use xn::{
+    BackendQ, Tensor, Unquantized,
+    nn::VB,
+    quantized::{Q4kF32, Q6kF32, Q80F32},
+};
 
 const SAMPLE_RATE: usize = 24_000;
 
@@ -29,6 +33,8 @@ const SAMPLE_RATE: usize = 24_000;
 enum Precision {
     Fp32,
     Q8,
+    Q6k,
+    Q4k,
 }
 
 #[derive(Debug, Parser)]
@@ -165,6 +171,8 @@ fn main() -> Result<()> {
     match args.precision {
         Precision::Fp32 => run::<Unquantized<f32, xn::CpuDevice>>(&args, xn::CPU),
         Precision::Q8 => run::<Q80F32>(&args, xn::CPU),
+        Precision::Q6k => run::<Q6kF32>(&args, xn::CPU),
+        Precision::Q4k => run::<Q4kF32>(&args, xn::CPU),
     }
 }
 
@@ -443,8 +451,11 @@ fn validate_paths(args: &Args) -> Result<()> {
         args.precision,
         args.weights.extension().and_then(|value| value.to_str()),
     ) {
-        (Precision::Q8, Some("gguf")) | (Precision::Fp32, Some("safetensors")) => Ok(()),
-        (Precision::Q8, _) => bail!("Q8 evaluation requires XN GGUF weights"),
+        (Precision::Q8 | Precision::Q6k | Precision::Q4k, Some("gguf"))
+        | (Precision::Fp32, Some("safetensors")) => Ok(()),
+        (Precision::Q8 | Precision::Q6k | Precision::Q4k, _) => {
+            bail!("quantized evaluation requires XN GGUF weights")
+        }
         (Precision::Fp32, _) => bail!("FP32 evaluation requires safetensors weights"),
     }
 }
@@ -553,7 +564,25 @@ fn peak_rss_bytes() -> Option<u64> {
     })
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn peak_rss_bytes() -> Option<u64> {
+    use windows_sys::Win32::System::{
+        ProcessStatus::{K32GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS},
+        Threading::GetCurrentProcess,
+    };
+
+    let size = u32::try_from(std::mem::size_of::<PROCESS_MEMORY_COUNTERS>()).ok()?;
+    let mut counters = PROCESS_MEMORY_COUNTERS {
+        cb: size,
+        ..PROCESS_MEMORY_COUNTERS::default()
+    };
+    // SAFETY: GetCurrentProcess returns a valid pseudo-handle for this process,
+    // and counters points to a complete writable structure of the supplied size.
+    let success = unsafe { K32GetProcessMemoryInfo(GetCurrentProcess(), &mut counters, size) };
+    (success != 0).then(|| counters.PeakWorkingSetSize as u64)
+}
+
+#[cfg(not(any(unix, windows)))]
 fn peak_rss_bytes() -> Option<u64> {
     None
 }

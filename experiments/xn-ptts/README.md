@@ -9,7 +9,8 @@ OS exposes it, and after-first-audio cancellation behavior.
 
 The harness performs no downloads. Supply an already-authorized official model,
 its matching tokenizer and JSON configuration, and an XN-generated voice-state
-safetensors. Q8 weights must be an XN GGUF produced by the pinned XN quantizer.
+safetensors. Q8_0, Q6_K, and Q4_K weights must be XN GGUF files produced by the
+pinned XN quantizer.
 
 ```console
 cargo run --locked --release -- \

@@ -17,6 +17,9 @@ serde_json = "1.0"
 sha2 = "0.10"
 xn = "=0.1.21"
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_System_ProcessStatus", "Win32_System_Threading"] }
+
 [profile.release]
 codegen-units = 1
 lto = "thin"
