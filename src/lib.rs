@@ -6,6 +6,7 @@ pub mod model;
 pub mod protocol;
 pub mod store;
 pub mod voice;
+pub mod xn_bundle;
 pub mod xn_engine;
 
 pub const PROVIDER_SLUG: &str = "pocket-tts";

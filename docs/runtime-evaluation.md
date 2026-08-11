@@ -317,6 +317,21 @@ ordinary inference instead of requiring users to retain separate f32 encoder
 weights. These hashes describe local evaluation artifacts, not a published
 catalog entry.
 
+The first full UtterPipe run used that bundle through the provider's versioned
+store, a freshly prepared Caro Davy state, four XN threads, two warmups, ten
+measurements, and two after-first-audio cancellations on the Apple M4 host.
+Runtime initialization took 362 ms. Median/p95 first audio was 23.6/34.3 ms,
+completion was 483/500 ms, and real-time factor was 0.1059/0.1097 for a stable
+4.56-second, 57-frame output. Sampled direct-process RSS was 278.90 MB steady
+and 279.25 MB peak. Both cancellations were accepted; median acknowledgement
+was 0.109 ms, terminal cleanup was 6.50 ms, and no audio appeared after either
+acknowledgement. A subsequent health request succeeded in the same process.
+The experimental executable containing both sherpa and XN engines was 27.63 MB,
+and the installed model/reference/state store was 149.67 MB with zero synthesis
+growth. This clears the macOS framing, backpressure, acknowledgement-ordering,
+post-ack silence, warm-reuse, and clean-shutdown gates. Windows and Linux must
+repeat the same provider-level test before backend promotion.
+
 ## Artifact observations
 
 Public Hugging Face metadata at revision

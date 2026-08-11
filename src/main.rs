@@ -15,6 +15,7 @@ use utterpipe_pocket_tts::{
         CURATED_VOICES, CuratedLicense, CuratedVoice, ExpectedDownload, VoiceSource,
         curated_download_url, curated_license_by_id, download_voice,
     },
+    xn_bundle::{APRIL_MODEL_ID, verify_bundle as verify_xn_bundle},
 };
 
 mod cli_catalog;
@@ -70,6 +71,19 @@ enum ModelCommand {
         #[arg(long)]
         archive: Option<PathBuf>,
         /// Required disclosure ID; repeat for all three IDs.
+        #[arg(long = "accept")]
+        accepted: Vec<String>,
+        /// Confirm the displayed plan and terms.
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Import a complete self-describing XN bundle from a local directory.
+    Import {
+        /// Directory containing manifest.json, model.gguf, config.json, and tokenizer.json.
+        source: PathBuf,
+        #[command(flatten)]
+        storage: Storage,
+        /// Required bundle disclosure ID; repeat for every displayed ID.
         #[arg(long = "accept")]
         accepted: Vec<String>,
         /// Confirm the displayed plan and terms.
@@ -157,13 +171,14 @@ async fn run() -> Result<(), String> {
             println!("version: {PROVIDER_VERSION}");
             println!("protocol: utterpipe.tts v1");
             println!("delivery: complete PCM16 WAV, incremental PCM16");
-            println!("engine: sherpa-onnx 1.13.4 (static)");
+            println!("engines: sherpa-onnx 1.13.4 (static), XN 0.1.21 (native Rust)");
             Ok(())
         }
         Command::Doctor(storage) => {
             let store = store(storage)?;
             store.validate_local().map_err(public_store_error)?;
-            println!("model: {}", store.model_status());
+            println!("sherpa model: {}", store.model_status());
+            println!("XN model: {}", store.xn_model_status());
             println!(
                 "imported voices: {}",
                 store.voice_catalog().map_err(public_store_error)?.len()
@@ -175,8 +190,17 @@ async fn run() -> Result<(), String> {
                 let store = store(storage)?;
                 println!(
                     "{}",
-                    serde_json::to_string_pretty(&model_descriptor(store.model_status()))
-                        .map_err(|_| "could not encode model descriptor".to_owned())?
+                    serde_json::to_string_pretty(&serde_json::json!([
+                        model_descriptor(store.model_status()),
+                        {
+                            "id": APRIL_MODEL_ID,
+                            "name": "Pocket TTS English April 2026 Q8 (XN)",
+                            "status": store.xn_model_status(),
+                            "languages": ["en"],
+                            "source": "local validated bundle import"
+                        }
+                    ]))
+                    .map_err(|_| "could not encode model descriptor".to_owned())?
                 );
                 Ok(())
             }
@@ -204,8 +228,49 @@ async fn run() -> Result<(), String> {
                 println!("installed: model:{MODEL_ID}");
                 Ok(())
             }
+            ModelCommand::Import {
+                source,
+                storage,
+                mut accepted,
+                yes,
+            } => {
+                let source = absolute_path(source)?;
+                let bundle =
+                    verify_xn_bundle(&source, || false).map_err(|error| error.to_string())?;
+                println!("Plan: import {}", bundle.manifest.model_id);
+                println!("Name: {}", bundle.manifest.name);
+                println!(
+                    "Source: {} at {}",
+                    bundle.manifest.source_repository, bundle.manifest.source_revision
+                );
+                println!(
+                    "Runtime: {} {} ({})",
+                    bundle.manifest.runtime.engine,
+                    bundle.manifest.runtime.revision,
+                    bundle.manifest.runtime.precision
+                );
+                println!("Disclosures:");
+                for license in &bundle.manifest.licenses {
+                    println!("- {} ({}) {}", license.name, license.id, license.url);
+                }
+                cli_confirm::model_bundle_import(&bundle.manifest.licenses, &mut accepted, yes)?;
+                let store = store(storage)?;
+                store
+                    .install_xn_bundle_from_directory(&source, &accepted)
+                    .map_err(public_store_error)?;
+                for voice in store.voice_catalog().map_err(public_store_error)? {
+                    let Some(voice_id) = voice["id"].as_str() else {
+                        continue;
+                    };
+                    store
+                        .prepare_xn_voice(APRIL_MODEL_ID, voice_id, default_xn_threads())
+                        .map_err(public_store_error)?;
+                }
+                println!("installed: model:{}", bundle.manifest.model_id);
+                Ok(())
+            }
             ModelCommand::Remove { id, storage, yes } => {
-                if id != MODEL_ID {
+                if id != MODEL_ID && id != APRIL_MODEL_ID {
                     return Err("unknown model ID".to_owned());
                 }
                 let artifact = format!("model:{id}");
@@ -469,6 +534,8 @@ async fn import_voice_path(
     provenance: Option<VoiceProvenance>,
     cancellation: tokio_util::sync::CancellationToken,
 ) -> Result<(), String> {
+    let preparation_store = store.clone();
+    let preparation_id = id.clone();
     let mutation = store.begin_mutation().map_err(public_store_error)?;
     let task_cancellation = cancellation.clone();
     let mut task = tokio::task::spawn_blocking(move || {
@@ -491,5 +558,34 @@ async fn import_voice_path(
                 .map_err(|_| "voice import worker failed".to_owned())?
                 .map_err(public_store_error)
         }
+    }?;
+    if preparation_store.xn_model_status() == "installed" {
+        let preparation_mutation = preparation_store
+            .begin_mutation()
+            .map_err(public_store_error)?;
+        let preparation_cancellation = cancellation.clone();
+        let mut preparation = tokio::task::spawn_blocking(move || {
+            preparation_store.prepare_xn_voice_locked(
+                APRIL_MODEL_ID,
+                &preparation_id,
+                default_xn_threads(),
+                &preparation_mutation,
+                || preparation_cancellation.is_cancelled(),
+            )
+        });
+        tokio::select! {
+            result = &mut preparation => result
+                .map_err(|_| "XN voice preparation worker failed".to_owned())?
+                .map_err(public_store_error)?,
+            () = cancellation.cancelled() => preparation
+                .await
+                .map_err(|_| "XN voice preparation worker failed".to_owned())?
+                .map_err(public_store_error)?,
+        }
     }
+    Ok(())
+}
+
+fn default_xn_threads() -> u32 {
+    if cfg!(target_arch = "aarch64") { 4 } else { 8 }
 }

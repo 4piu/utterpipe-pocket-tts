@@ -2,7 +2,7 @@ use serde::{Deserialize, Deserializer};
 use serde_json::{Value, json};
 use thiserror::Error;
 
-use crate::{engine::EngineOptions, model::MODEL_ID};
+use crate::{engine::EngineOptions, model::MODEL_ID, xn_bundle::APRIL_MODEL_ID};
 
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -46,10 +46,14 @@ pub enum ConfigError {
     Threads,
     #[error("speed must be from 0.5 through 2.0")]
     Speed,
+    #[error("speed is unavailable for the XN model")]
+    XnSpeed,
     #[error("max_reference_audio_seconds must be from 1 through 30")]
     ReferenceLength,
     #[error("voice_embedding_cache_capacity must be from 1 through 128")]
     VoiceCache,
+    #[error("reference-length and sherpa voice-cache options are unavailable for the XN model")]
+    XnOptions,
     #[error("runtime provider options require model and voice")]
     Incomplete,
 }
@@ -61,7 +65,11 @@ impl ProviderOptions {
     ///
     /// Returns [`ConfigError`] when any supplied option is invalid.
     pub fn validate_partial(&self) -> Result<(), ConfigError> {
-        if self.model.as_deref().is_some_and(|model| model != MODEL_ID) {
+        if self
+            .model
+            .as_deref()
+            .is_some_and(|model| !matches!(model, MODEL_ID | APRIL_MODEL_ID))
+        {
             return Err(ConfigError::Model);
         }
         if self
@@ -75,7 +83,14 @@ impl ProviderOptions {
             self.num_threads,
             self.max_reference_audio_seconds,
             self.voice_embedding_cache_capacity,
-        )
+        )?;
+        if self.model.as_deref() == Some(APRIL_MODEL_ID)
+            && (self.max_reference_audio_seconds.is_some()
+                || self.voice_embedding_cache_capacity.is_some())
+        {
+            return Err(ConfigError::XnOptions);
+        }
+        Ok(())
     }
 
     /// Validate the complete configuration required to start synthesis.
@@ -104,6 +119,12 @@ impl ProviderOptions {
                 .unwrap_or(defaults.voice_embedding_cache_capacity),
         }
     }
+
+    #[must_use]
+    pub fn xn_num_threads(&self) -> u32 {
+        self.num_threads
+            .unwrap_or(if cfg!(target_arch = "aarch64") { 4 } else { 8 })
+    }
 }
 
 impl UtteranceOptions {
@@ -114,6 +135,19 @@ impl UtteranceOptions {
     /// Returns [`ConfigError`] when a supplied control is outside its schema.
     pub fn validate(&self) -> Result<(), ConfigError> {
         validate_request_controls(self.speed)
+    }
+
+    /// Validate per-utterance controls against the selected runtime.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigError::XnSpeed`] when XN receives a speed field.
+    pub fn validate_for_model(&self, model_id: &str) -> Result<(), ConfigError> {
+        self.validate()?;
+        if model_id == APRIL_MODEL_ID && self.speed.is_some() {
+            return Err(ConfigError::XnSpeed);
+        }
+        Ok(())
     }
 
     #[must_use]
@@ -172,10 +206,22 @@ pub fn management_options_schema() -> Value {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
         "additionalProperties": false,
+        "allOf": [{
+            "if": {
+                "properties": {"model": {"const": APRIL_MODEL_ID}},
+                "required": ["model"]
+            },
+            "then": {
+                "properties": {
+                    "max_reference_audio_seconds": false,
+                    "voice_embedding_cache_capacity": false
+                }
+            }
+        }],
         "properties": {
-            "model": {"type":"string", "enum":[MODEL_ID]},
+            "model": {"type":"string", "enum":[MODEL_ID, APRIL_MODEL_ID]},
             "voice": {"type":"string", "minLength":1, "maxLength":64, "pattern":"^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?$"},
-            "num_threads": {"type":"integer", "minimum":1, "maximum":64, "default":2},
+            "num_threads": {"type":"integer", "minimum":1, "maximum":64},
             "max_reference_audio_seconds": {"type":"number", "minimum":1.0, "maximum":30.0, "default":10.0},
             "voice_embedding_cache_capacity": {"type":"integer", "minimum":1, "maximum":128, "default":16}
         }
@@ -216,6 +262,18 @@ pub fn utterance_options_schema() -> Value {
     })
 }
 
+#[must_use]
+pub fn utterance_options_schema_for_model(model_id: &str) -> Value {
+    let mut schema = utterance_options_schema();
+    if model_id == APRIL_MODEL_ID {
+        schema["properties"]
+            .as_object_mut()
+            .expect("static schema properties must be an object")
+            .remove("speed");
+    }
+    schema
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -235,5 +293,32 @@ mod tests {
         let utterance: UtteranceOptions = serde_json::from_value(json!({"speed":1.2})).unwrap();
         assert_eq!(utterance.effective_controls(), (1.2, 42));
         assert_eq!(UtteranceOptions::default().effective_controls(), (1.0, 42));
+    }
+
+    #[test]
+    fn xn_rejects_sherpa_only_controls_and_non_neutral_speed() {
+        let options: ProviderOptions = serde_json::from_value(json!({
+            "model": APRIL_MODEL_ID,
+            "voice": "test",
+            "voice_embedding_cache_capacity": 4
+        }))
+        .unwrap();
+        assert!(matches!(
+            options.validate_runtime(),
+            Err(ConfigError::XnOptions)
+        ));
+        let utterance: UtteranceOptions = serde_json::from_value(json!({"speed":1.2})).unwrap();
+        assert!(matches!(
+            utterance.validate_for_model(APRIL_MODEL_ID),
+            Err(ConfigError::XnSpeed)
+        ));
+        let neutral: UtteranceOptions = serde_json::from_value(json!({"speed":1.0})).unwrap();
+        assert!(matches!(
+            neutral.validate_for_model(APRIL_MODEL_ID),
+            Err(ConfigError::XnSpeed)
+        ));
+        assert!(
+            utterance_options_schema_for_model(APRIL_MODEL_ID)["properties"]["speed"].is_null()
+        );
     }
 }

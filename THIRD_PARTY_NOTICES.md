@@ -57,6 +57,17 @@ its upstream license and attribution; arbitrary imports remain user-provided.
 The provider does not grant rights to a recording, speaker identity, or
 generated voice.
 
+## Native XN candidate
+
+Development builds also incorporate the `ptts` and `xn` Rust crates from the
+project fork of `LaurentMazare/xn-ptts` at revision
+`4dbd8d6832cf4e093d08a1bd4666a08783345e7b`, licensed MIT OR Apache-2.0. The
+fork adds learned voice-BOS and asymmetric Mimi bottleneck compatibility for
+the evaluated April checkpoint. The executable still contains no model or
+voice assets. A locally imported XN bundle retains its own source, model terms,
+acceptable-use conditions, and reference-voice terms; the adapter license does
+not replace them.
+
 Regenerate and compare the Rust report with cargo-about 0.9.1:
 
 ```sh

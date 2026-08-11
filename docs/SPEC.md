@@ -203,20 +203,22 @@ Unknown options are rejected. Runtime initialization requires `model` and
 
 | Option | Type | Default | Rules and meaning |
 | --- | --- | --- | --- |
-| `model` | string | required | must equal `pocket-tts-int8-2026-01-26` |
+| `model` | string | required | released sherpa ID or installed experimental `pocket-tts-english-2026-04-q8` |
 | `voice` | string | required | installed voice ID matching the import rules |
-| `num_threads` | integer | `2` | `1..64`; sherpa-onnx CPU inference threads |
-| `max_reference_audio_seconds` | number | `10.0` | finite `1.0..30.0`; maximum prompt audio used by the engine |
-| `voice_embedding_cache_capacity` | integer | `16` | `1..128`; in-memory embeddings per runtime process |
+| `num_threads` | integer | backend/platform default | `1..64`; CPU inference threads |
+| `max_reference_audio_seconds` | number | `10.0` | finite `1.0..30.0`; sherpa only |
+| `voice_embedding_cache_capacity` | integer | `16` | `1..128`; sherpa only |
 
 The provider publishes complete and partial JSON Schema Draft 2020-12 schemas
 with `additionalProperties: false`. None is a secret. There is no configurable output
 sample rate: the provider reports the engine's actual 24,000 Hz output and the
 host adapts it to the playback device.
 
-The resolved utterance-options schema exposes `speed` (finite `0.5..2.0`,
-default `1.0`) and `seed` (`0..4294967295`, default `42`). The host sends either
-value only for the current request; all provider options are startup-fixed.
+The released sherpa resolved utterance-options schema exposes `speed` (finite
+`0.5..2.0`, default `1.0`) and `seed` (`0..4294967295`, default `42`). The XN
+schema exposes only `seed`; any supplied speed field is rejected because the
+runtime has no speed control. The host sends a value only for the current
+request; all provider options are startup-fixed.
 `seed` makes repeated requests reproducible only to the extent supported by the
 pinned engine, target, and thread configuration. Bit-identical output across
 platforms is not promised.
@@ -259,6 +261,38 @@ WAV files as voices. Each installed file is checked against this manifest:
 The catalog reports `available`, `installed`, `incomplete`, or `incompatible`.
 Upstream mutation at the same URL is an integrity error, never an implicit
 upgrade. A replacement requires a new model ID and manifest.
+
+### Experimental XN bundle boundary
+
+Development builds recognize `pocket-tts-english-2026-04-q8` only through an
+explicit local bundle import. It is not advertised as remotely available. The
+bundle directory contains the three runtime payloads `model.gguf`,
+`config.json`, and `tokenizer.json`, plus `manifest.json`. Manifest schema
+`utterpipe.pocket-tts.xn-bundle/1` binds:
+
+- model ID, display name, version, English language, source repository, and
+  immutable source revision;
+- XN engine ID, project-fork revision, XN version, Q8_0 precision, and April
+  compatibility class;
+- temperature and text/post-EOS behavior for that model generation;
+- every disclosure ID, name, and HTTPS URL; and
+- exact byte length and lowercase SHA-256 for all three runtime payloads.
+
+Unknown fields, relative or symlink roots, non-regular payloads, duplicate or
+invalid disclosures, unsupported runtime identifiers, unsafe behavior values,
+oversized files, malformed tokenizer/config data, sample rates other than 24
+kHz, and any size/hash mismatch fail closed. A canonicalized-manifest SHA-256
+is the immutable installed revision. Installation copies into version staging,
+verifies the copy, loads the full Mimi voice encoder, records accepted
+disclosures separately, syncs, and only then atomically publishes `active`.
+
+The full Q8 GGUF retains the voice encoder. Importing a normal validated WAV
+creates a compact safetensors state under a model- and reference-specific
+revision. The provider applies upstream PCM scaling, loudness normalization,
+24 kHz resampling, and prompt trimming once during preparation. Runtime
+initialization verifies and leases the model, original reference, and derived
+state together. Removing the reference also removes its derived state after
+proving that no runtime holds the reference lease.
 
 ## 9. Voice import and catalog
 

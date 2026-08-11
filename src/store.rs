@@ -19,6 +19,10 @@ use thiserror::Error;
 use crate::{
     audio::{self, ReferenceAudio},
     model::{ARCHIVE_SHA256, MODEL_ID, REQUIRED_FILES, VERSION_TOKEN},
+    xn_bundle::{
+        APRIL_MODEL_ID, VerifiedXnBundle, XnBundleError, verify_bundle as verify_xn_bundle,
+    },
+    xn_engine::XnVoiceEncoder,
 };
 
 const SCHEMA_VERSION: u32 = 1;
@@ -37,6 +41,19 @@ pub struct RuntimeAssets {
     pub reference: ReferenceAudio,
     _model_lease: File,
     _voice_lease: File,
+}
+
+pub struct XnModelAssets {
+    pub bundle: VerifiedXnBundle,
+    _model_lease: File,
+}
+
+pub struct XnRuntimeAssets {
+    pub bundle: VerifiedXnBundle,
+    pub voice_state: PathBuf,
+    _model_lease: File,
+    _voice_lease: File,
+    _voice_state_lease: File,
 }
 
 /// Exclusive cross-process lease held for the full lifetime of one mutation.
@@ -104,6 +121,27 @@ struct ModelManifest {
 }
 
 #[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct XnInstallation {
+    schema_version: u32,
+    model_id: String,
+    bundle_revision: String,
+    accepted_licenses: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct XnVoiceStateManifest {
+    schema_version: u32,
+    model_id: String,
+    bundle_revision: String,
+    voice_id: String,
+    reference_version: String,
+    state_bytes: u64,
+    state_sha256: String,
+}
+
+#[derive(Serialize, Deserialize)]
 struct VoiceMetadata {
     schema_version: u32,
     voice_id: String,
@@ -150,6 +188,18 @@ impl Store {
         }
     }
 
+    #[must_use]
+    pub fn xn_model_status(&self) -> &'static str {
+        match self
+            .active_xn_model_dir()
+            .and_then(|path| verify_xn_installation(&path).map(|_| ()))
+        {
+            Ok(()) => "installed",
+            Err(StoreError::ModelMissing) => "available",
+            Err(_) => "incomplete",
+        }
+    }
+
     /// Validate an existing operational schema without creating it.
     ///
     /// # Errors
@@ -172,6 +222,8 @@ impl Store {
     pub fn artifact_token(&self, artifact: &str) -> Result<String, StoreError> {
         if artifact == format!("model:{MODEL_ID}") {
             read_active(&self.data_dir.join("models").join(MODEL_ID))
+        } else if artifact == format!("model:{APRIL_MODEL_ID}") {
+            read_active(&self.data_dir.join("models").join(APRIL_MODEL_ID))
         } else if let Some(voice) = artifact.strip_prefix("voice:") {
             if !valid_voice_id(voice) {
                 return Err(StoreError::InvalidVoiceId);
@@ -302,6 +354,72 @@ impl Store {
         })
     }
 
+    /// Verify and acquire a shared lease on the installed XN model bundle.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable missing, integrity, schema, I/O, or lease error.
+    pub fn acquire_xn_model(&self, model_id: &str) -> Result<XnModelAssets, StoreError> {
+        self.validate_schema_required()?;
+        if model_id != APRIL_MODEL_ID {
+            return Err(StoreError::ModelMissing);
+        }
+        let model_dir = self.active_xn_model_dir()?;
+        let bundle = verify_xn_installation(&model_dir)?;
+        if model_dir.file_name().and_then(|name| name.to_str()) != Some(bundle.revision.as_str()) {
+            return Err(StoreError::Integrity);
+        }
+        let model_lease = open_shared_lease(&model_dir.join("lease.lock"))?;
+        Ok(XnModelAssets {
+            bundle,
+            _model_lease: model_lease,
+        })
+    }
+
+    /// Acquire verified model, reference, and prepared voice-state leases for XN.
+    ///
+    /// # Errors
+    ///
+    /// Returns missing, integrity, schema, I/O, or concurrent-removal errors.
+    pub fn acquire_xn_runtime(
+        &self,
+        model_id: &str,
+        voice_id: &str,
+    ) -> Result<XnRuntimeAssets, StoreError> {
+        let model = self.acquire_xn_model(model_id)?;
+        if !valid_voice_id(voice_id) {
+            return Err(StoreError::VoiceMissing);
+        }
+        let voice_root = self.data_dir.join("voices").join(voice_id);
+        let reference_version = read_active(&voice_root).map_err(|error| match error {
+            StoreError::ModelMissing => StoreError::VoiceMissing,
+            other => other,
+        })?;
+        let voice_dir = voice_root.join("versions").join(&reference_version);
+        verify_voice_dir(&voice_dir, voice_id)?;
+        let voice_lease = open_shared_lease(&voice_dir.join("lease.lock"))?;
+        let state_root = self
+            .data_dir
+            .join("voice-states")
+            .join(APRIL_MODEL_ID)
+            .join(voice_id);
+        let state_version = read_active(&state_root).map_err(|_| StoreError::VoiceMissing)?;
+        let state_dir = state_root.join("versions").join(&state_version);
+        let voice_state =
+            verify_xn_voice_state(&state_dir, &model.bundle, voice_id, &reference_version)?;
+        if state_version != expected_xn_voice_state_version(&model.bundle, &reference_version) {
+            return Err(StoreError::Integrity);
+        }
+        let voice_state_lease = open_shared_lease(&state_dir.join("lease.lock"))?;
+        Ok(XnRuntimeAssets {
+            bundle: model.bundle,
+            voice_state,
+            _model_lease: model._model_lease,
+            _voice_lease: voice_lease,
+            _voice_state_lease: voice_state_lease,
+        })
+    }
+
     /// Install and activate the pinned model from an already-downloaded archive.
     ///
     /// # Errors
@@ -322,6 +440,211 @@ impl Store {
         }
         let mutation = self.begin_mutation()?;
         self.install_model_from_archive_locked(archive_path, accepted_licenses, &mutation, || false)
+    }
+
+    /// Install and activate a validated extracted XN model bundle.
+    ///
+    /// # Errors
+    ///
+    /// Returns a lock, disclosure, integrity, cancellation, native-load, or
+    /// storage error without activating partial contents.
+    pub fn install_xn_bundle_from_directory(
+        &self,
+        source: &Path,
+        accepted_licenses: &[String],
+    ) -> Result<(), StoreError> {
+        let mutation = self.begin_mutation()?;
+        self.install_xn_bundle_from_directory_locked(source, accepted_licenses, &mutation, || false)
+    }
+
+    /// Install an extracted XN bundle while a caller-owned mutation lease is held.
+    ///
+    /// # Errors
+    ///
+    /// Returns a disclosure, integrity, cancellation, native-load, or storage error.
+    pub fn install_xn_bundle_from_directory_locked<F>(
+        &self,
+        source: &Path,
+        accepted_licenses: &[String],
+        _mutation: &MutationGuard,
+        cancelled: F,
+    ) -> Result<(), StoreError>
+    where
+        F: Fn() -> bool,
+    {
+        check_cancelled(&cancelled)?;
+        let source_bundle = verify_xn_bundle(source, &cancelled).map_err(xn_bundle_error)?;
+        let accepted: HashSet<_> = accepted_licenses.iter().map(String::as_str).collect();
+        if !source_bundle
+            .manifest
+            .licenses
+            .iter()
+            .all(|license| accepted.contains(license.id.as_str()))
+        {
+            return Err(StoreError::LicenseRequired);
+        }
+        self.initialize_schema()?;
+        let root = self.data_dir.join("models").join(APRIL_MODEL_ID);
+        let versions = root.join("versions");
+        fs::create_dir_all(&versions).map_err(|_| StoreError::Io)?;
+        let destination = versions.join(&source_bundle.revision);
+        if destination.exists() {
+            let installed = verify_xn_installation(&destination)?;
+            if installed.revision != source_bundle.revision {
+                return Err(StoreError::Integrity);
+            }
+        } else {
+            let staging = versions.join(format!(".staging-{}", operation_id()));
+            fs::create_dir(&staging).map_err(|_| StoreError::Io)?;
+            let result = (|| {
+                for name in [
+                    "manifest.json",
+                    "config.json",
+                    "model.gguf",
+                    "tokenizer.json",
+                ] {
+                    check_cancelled(&cancelled)?;
+                    copy_file_cancelled(&source.join(name), &staging.join(name), &cancelled)?;
+                }
+                let staged = verify_xn_bundle(&staging, &cancelled).map_err(xn_bundle_error)?;
+                if staged.revision != source_bundle.revision {
+                    return Err(StoreError::Integrity);
+                }
+                check_cancelled(&cancelled)?;
+                XnVoiceEncoder::create(&staged.config_path(), &staged.model_path(), 1)
+                    .map_err(|_| StoreError::Integrity)?;
+                check_cancelled(&cancelled)?;
+                write_json_synced(
+                    &staging.join("installation.json"),
+                    &XnInstallation {
+                        schema_version: SCHEMA_VERSION,
+                        model_id: APRIL_MODEL_ID.to_owned(),
+                        bundle_revision: staged.revision,
+                        accepted_licenses: accepted_licenses.to_vec(),
+                    },
+                )?;
+                File::create(staging.join("lease.lock"))
+                    .and_then(|file| file.sync_all())
+                    .map_err(|_| StoreError::Io)?;
+                sync_dir(&staging)?;
+                check_cancelled(&cancelled)?;
+                fs::rename(&staging, &destination).map_err(|_| StoreError::Io)?;
+                sync_dir(&versions)
+            })();
+            if result.is_err() {
+                let _ = fs::remove_dir_all(&staging);
+            }
+            result?;
+        }
+        check_cancelled(&cancelled)?;
+        publish_active(&root, &source_bundle.revision)
+    }
+
+    /// Prepare and activate an XN voice state from an installed reference.
+    ///
+    /// # Errors
+    ///
+    /// Returns a lock, missing-asset, integrity, cancellation, inference, or
+    /// storage error without publishing a partial state.
+    pub fn prepare_xn_voice(
+        &self,
+        model_id: &str,
+        voice_id: &str,
+        num_threads: u32,
+    ) -> Result<(), StoreError> {
+        let mutation = self.begin_mutation()?;
+        self.prepare_xn_voice_locked(model_id, voice_id, num_threads, &mutation, || false)
+    }
+
+    /// Prepare a voice while a caller-owned mutation lease is held.
+    ///
+    /// # Errors
+    ///
+    /// Returns a missing-asset, integrity, cancellation, inference, or storage error.
+    pub fn prepare_xn_voice_locked<F>(
+        &self,
+        model_id: &str,
+        voice_id: &str,
+        num_threads: u32,
+        _mutation: &MutationGuard,
+        cancelled: F,
+    ) -> Result<(), StoreError>
+    where
+        F: Fn() -> bool,
+    {
+        check_cancelled(&cancelled)?;
+        if model_id != APRIL_MODEL_ID || !valid_voice_id(voice_id) {
+            return Err(StoreError::VoiceMissing);
+        }
+        let model = self.acquire_xn_model(model_id)?;
+        let voice_root = self.data_dir.join("voices").join(voice_id);
+        let reference_version = read_active(&voice_root).map_err(|_| StoreError::VoiceMissing)?;
+        let voice_dir = voice_root.join("versions").join(&reference_version);
+        let metadata = read_voice_metadata(&voice_dir)?;
+        verify_voice_dir(&voice_dir, voice_id)?;
+        let _voice_lease = open_shared_lease(&voice_dir.join("lease.lock"))?;
+        let reference = audio::read_reference(&voice_dir.join("reference.wav"), 30.0)
+            .map_err(|_| StoreError::Integrity)?;
+        if metadata.samples_sha256 != reference_version
+            || metadata.samples_sha256 != reference.samples_sha256
+        {
+            return Err(StoreError::Integrity);
+        }
+        let state_version = expected_xn_voice_state_version(&model.bundle, &reference_version);
+        let root = self
+            .data_dir
+            .join("voice-states")
+            .join(APRIL_MODEL_ID)
+            .join(voice_id);
+        let versions = root.join("versions");
+        fs::create_dir_all(&versions).map_err(|_| StoreError::Io)?;
+        let destination = versions.join(&state_version);
+        if destination.exists() {
+            verify_xn_voice_state(&destination, &model.bundle, voice_id, &reference_version)?;
+        } else {
+            let staging = versions.join(format!(".staging-{}", operation_id()));
+            fs::create_dir(&staging).map_err(|_| StoreError::Io)?;
+            let result = (|| {
+                let state_path = staging.join("voice.safetensors");
+                let encoder = XnVoiceEncoder::create(
+                    &model.bundle.config_path(),
+                    &model.bundle.model_path(),
+                    num_threads,
+                )
+                .map_err(xn_engine_error)?;
+                encoder
+                    .prepare_voice(&reference, &state_path, &cancelled)
+                    .map_err(xn_engine_error)?;
+                check_cancelled(&cancelled)?;
+                let state_bytes = fs::metadata(&state_path).map_err(|_| StoreError::Io)?.len();
+                let state_sha256 = hash_file_cancelled(&state_path, &cancelled)?;
+                write_json_synced(
+                    &staging.join("manifest.json"),
+                    &XnVoiceStateManifest {
+                        schema_version: SCHEMA_VERSION,
+                        model_id: APRIL_MODEL_ID.to_owned(),
+                        bundle_revision: model.bundle.revision.clone(),
+                        voice_id: voice_id.to_owned(),
+                        reference_version: reference_version.clone(),
+                        state_bytes,
+                        state_sha256,
+                    },
+                )?;
+                File::create(staging.join("lease.lock"))
+                    .and_then(|file| file.sync_all())
+                    .map_err(|_| StoreError::Io)?;
+                sync_dir(&staging)?;
+                check_cancelled(&cancelled)?;
+                fs::rename(&staging, &destination).map_err(|_| StoreError::Io)?;
+                sync_dir(&versions)
+            })();
+            if result.is_err() {
+                let _ = fs::remove_dir_all(&staging);
+            }
+            result?;
+        }
+        check_cancelled(&cancelled)?;
+        publish_active(&root, &state_version)
     }
 
     /// Install an archive while a caller-owned mutation lease is held.
@@ -602,10 +925,15 @@ impl Store {
         self.validate_schema_required()?;
         let mut leases = Vec::new();
         let mut roots = Vec::new();
+        let mut derived_roots = Vec::new();
         for artifact in artifacts {
             check_cancelled(&cancelled)?;
             let (root, version) = if artifact == &format!("model:{MODEL_ID}") {
                 let root = self.data_dir.join("models").join(MODEL_ID);
+                let version = read_active(&root)?;
+                (root, version)
+            } else if artifact == &format!("model:{APRIL_MODEL_ID}") {
+                let root = self.data_dir.join("models").join(APRIL_MODEL_ID);
                 let version = read_active(&root)?;
                 (root, version)
             } else if let Some(voice) = artifact.strip_prefix("voice:") {
@@ -614,6 +942,12 @@ impl Store {
                 }
                 let root = self.data_dir.join("voices").join(voice);
                 let version = read_active(&root).map_err(|_| StoreError::VoiceMissing)?;
+                derived_roots.push(
+                    self.data_dir
+                        .join("voice-states")
+                        .join(APRIL_MODEL_ID)
+                        .join(voice),
+                );
                 (root, version)
             } else {
                 return Err(StoreError::InvalidVoiceId);
@@ -650,6 +984,9 @@ impl Store {
             // Residual immutable versions are safe garbage and may be cleaned later.
             let _ = fs::remove_dir_all(root);
         }
+        for root in derived_roots {
+            let _ = fs::remove_dir_all(root);
+        }
         Ok(artifacts.to_vec())
     }
 
@@ -659,6 +996,12 @@ impl Store {
         if version != VERSION_TOKEN {
             return Err(StoreError::Integrity);
         }
+        Ok(root.join("versions").join(version))
+    }
+
+    fn active_xn_model_dir(&self) -> Result<PathBuf, StoreError> {
+        let root = self.data_dir.join("models").join(APRIL_MODEL_ID);
+        let version = read_active(&root)?;
         Ok(root.join("versions").join(version))
     }
 
@@ -847,6 +1190,87 @@ fn verify_model_dir(path: &Path) -> Result<(), StoreError> {
         }
     }
     Ok(())
+}
+
+fn verify_xn_installation(path: &Path) -> Result<VerifiedXnBundle, StoreError> {
+    if !path.is_dir() {
+        return Err(StoreError::ModelMissing);
+    }
+    let bundle = verify_xn_bundle(path, || false).map_err(xn_bundle_error)?;
+    let bytes = fs::read(path.join("installation.json")).map_err(|_| StoreError::Integrity)?;
+    let installation: XnInstallation =
+        serde_json::from_slice(&bytes).map_err(|_| StoreError::Integrity)?;
+    let accepted: HashSet<_> = installation
+        .accepted_licenses
+        .iter()
+        .map(String::as_str)
+        .collect();
+    if installation.schema_version != SCHEMA_VERSION
+        || installation.model_id != APRIL_MODEL_ID
+        || installation.bundle_revision != bundle.revision
+        || !bundle
+            .manifest
+            .licenses
+            .iter()
+            .all(|license| accepted.contains(license.id.as_str()))
+    {
+        return Err(StoreError::Integrity);
+    }
+    Ok(bundle)
+}
+
+fn expected_xn_voice_state_version(bundle: &VerifiedXnBundle, reference_version: &str) -> String {
+    let mut digest = Sha256::new();
+    digest.update(bundle.revision.as_bytes());
+    digest.update(b":");
+    digest.update(reference_version.as_bytes());
+    format!("{:x}", digest.finalize())
+}
+
+fn verify_xn_voice_state(
+    path: &Path,
+    bundle: &VerifiedXnBundle,
+    voice_id: &str,
+    reference_version: &str,
+) -> Result<PathBuf, StoreError> {
+    if !path.is_dir() {
+        return Err(StoreError::VoiceMissing);
+    }
+    let bytes = fs::read(path.join("manifest.json")).map_err(|_| StoreError::Integrity)?;
+    let manifest: XnVoiceStateManifest =
+        serde_json::from_slice(&bytes).map_err(|_| StoreError::Integrity)?;
+    let state_path = path.join("voice.safetensors");
+    if manifest.schema_version != SCHEMA_VERSION
+        || manifest.model_id != APRIL_MODEL_ID
+        || manifest.bundle_revision != bundle.revision
+        || manifest.voice_id != voice_id
+        || manifest.reference_version != reference_version
+        || fs::metadata(&state_path)
+            .map_err(|_| StoreError::Integrity)?
+            .len()
+            != manifest.state_bytes
+        || hash_file(&state_path)? != manifest.state_sha256
+    {
+        return Err(StoreError::Integrity);
+    }
+    Ok(state_path)
+}
+
+fn xn_bundle_error(error: XnBundleError) -> StoreError {
+    match error {
+        XnBundleError::InvalidPath | XnBundleError::InvalidManifest | XnBundleError::Integrity => {
+            StoreError::Integrity
+        }
+        XnBundleError::Cancelled => StoreError::Cancelled,
+        XnBundleError::Io => StoreError::Io,
+    }
+}
+
+fn xn_engine_error(error: crate::engine::EngineError) -> StoreError {
+    match error {
+        crate::engine::EngineError::Cancelled => StoreError::Cancelled,
+        _ => StoreError::Integrity,
+    }
 }
 
 fn read_voice_metadata(path: &Path) -> Result<VoiceMetadata, StoreError> {

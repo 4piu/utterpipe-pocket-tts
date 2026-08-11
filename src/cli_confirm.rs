@@ -2,6 +2,7 @@ use std::io::{self, BufRead, IsTerminal, Write};
 
 use utterpipe_pocket_tts::model::LICENSE_IDS;
 use utterpipe_pocket_tts::voice::CuratedLicense;
+use utterpipe_pocket_tts::xn_bundle::BundleLicense;
 
 const PREPARE_CONFIRMATION_REQUIRED: &str = "preparation requires --yes after reviewing the plan";
 const LICENSE_ACCEPTANCE_REQUIRED: &str = "all three disclosure IDs must be supplied with --accept";
@@ -28,6 +29,16 @@ pub(crate) fn curated_voice_install(
 ) -> Result<(), String> {
     with_terminal(|input, output, interactive| {
         curated_voice_install_with(input, output, interactive, licenses, accepted, yes)
+    })
+}
+
+pub(crate) fn model_bundle_import(
+    licenses: &[BundleLicense],
+    accepted: &mut Vec<String>,
+    yes: bool,
+) -> Result<(), String> {
+    with_terminal(|input, output, interactive| {
+        model_bundle_import_with(input, output, interactive, licenses, accepted, yes)
     })
 }
 
@@ -150,6 +161,42 @@ fn curated_voice_install_with(
         )?
     {
         return Err("curated voice installation cancelled".to_owned());
+    }
+    Ok(())
+}
+
+fn model_bundle_import_with(
+    input: &mut dyn BufRead,
+    output: &mut dyn Write,
+    interactive: bool,
+    licenses: &[BundleLicense],
+    accepted: &mut Vec<String>,
+    yes: bool,
+) -> Result<(), String> {
+    if !yes && !interactive {
+        return Err("model bundle import requires --yes after reviewing the plan".to_owned());
+    }
+    for license in licenses {
+        if accepted.iter().any(|value| value == &license.id) {
+            continue;
+        }
+        if !interactive {
+            return Err(format!(
+                "model bundle import requires --accept {}",
+                license.id
+            ));
+        }
+        if !confirm(
+            input,
+            output,
+            &format!("Acknowledge model disclosure '{}'? [y/N] ", license.id),
+        )? {
+            return Err("model bundle disclosure acceptance declined".to_owned());
+        }
+        accepted.push(license.id.clone());
+    }
+    if !yes && !confirm(input, output, "Install this XN model bundle now? [y/N] ")? {
+        return Err("model bundle import cancelled".to_owned());
     }
     Ok(())
 }
@@ -314,6 +361,50 @@ mod tests {
         let prompts = String::from_utf8(output).unwrap();
         assert!(prompts.contains("confirm permitted, consented use"));
         assert!(prompts.contains("Download and install"));
+    }
+
+    #[test]
+    fn model_bundle_import_collects_manifest_disclosures() {
+        let licenses = vec![BundleLicense {
+            id: "cc-by-4.0".to_owned(),
+            name: "CC BY 4.0".to_owned(),
+            url: "https://creativecommons.org/licenses/by/4.0/".to_owned(),
+            requires_acceptance: true,
+        }];
+        let mut accepted = Vec::new();
+        let mut input = Cursor::new(b"yes\nyes\n");
+        let mut output = Vec::new();
+        model_bundle_import_with(
+            &mut input,
+            &mut output,
+            true,
+            &licenses,
+            &mut accepted,
+            false,
+        )
+        .unwrap();
+        assert_eq!(accepted, ["cc-by-4.0"]);
+        assert!(
+            String::from_utf8(output)
+                .unwrap()
+                .contains("Install this XN model bundle")
+        );
+
+        let mut accepted = Vec::new();
+        let mut input = Cursor::new(b"yes\nyes\n");
+        let mut output = Vec::new();
+        assert!(
+            model_bundle_import_with(
+                &mut input,
+                &mut output,
+                false,
+                &licenses,
+                &mut accepted,
+                false,
+            )
+            .is_err()
+        );
+        assert_eq!(input.position(), 0);
     }
 
     #[test]

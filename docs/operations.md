@@ -74,12 +74,22 @@ Other inspection and removal commands are:
 utterpipe-pocket-tts info
 utterpipe-pocket-tts doctor [--data-dir <path>] [--cache-dir <path>]
 utterpipe-pocket-tts models list [--data-dir <path>] [--cache-dir <path>]
+utterpipe-pocket-tts models import <bundle-directory> [--accept <id>]... [--yes] [--data-dir <path>] [--cache-dir <path>]
 utterpipe-pocket-tts models remove <model-id> [--data-dir <path>] [--cache-dir <path>]
 utterpipe-pocket-tts voices list [--data-dir <path>] [--cache-dir <path>]
 utterpipe-pocket-tts voices available [--data-dir <path>] [--cache-dir <path>]
 utterpipe-pocket-tts voices remove <voice-id> [--data-dir <path>] [--cache-dir <path>]
 utterpipe-pocket-tts protocol --stdio
 ```
+
+`models import` is the expert/development route for a complete XN bundle. The
+directory must contain `manifest.json`, `model.gguf`, `config.json`, and
+`tokenizer.json`. The provider verifies fixed runtime compatibility, bounded
+metadata, exact sizes and SHA-256 values, tokenizer/config semantics, and a
+native voice-encoder load before atomic activation. It displays and requires
+every disclosure declared by the manifest. This command does not download or
+convert upstream weights and does not make an unpublished bundle a catalog
+availability claim.
 
 Removal is also confirmed interactively. Every mutating CLI path uses the same
 checked store operations and cross-process locks as the framed management

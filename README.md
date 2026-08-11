@@ -171,6 +171,14 @@ or a voice. Kyutai publishes the upstream gated
 are provenance/source weights for compatible Pocket runtimes, not drop-in files
 for this provider's current sherpa-onnx model installer.
 
+Development builds also contain the native XN candidate for the April 2026
+English model. It is intentionally absent from the downloadable quick-start
+catalog until its bundle and provider path pass Windows and Linux release
+gates. Developers with a complete validated local bundle can use `models
+import <directory>`; ordinary voice imports then prepare the compact XN state
+automatically. See the runtime evaluation for the current evidence and exact
+limitations.
+
 ## More documentation
 
 - [Setup, direct CLI, automation, storage, and development](docs/operations.md)

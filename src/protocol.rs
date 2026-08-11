@@ -29,14 +29,16 @@ use crate::{
     audio::{MAX_RIFF_REFERENCE_BYTES, pcm16_wav_bytes},
     config::{
         ProviderOptions, UtteranceOptions, management_options_schema, provider_options_schema,
-        utterance_options_schema,
+        utterance_options_schema_for_model,
     },
     engine::{EngineError, GenerationOptions, GenerationSummary, PocketEngine, SAMPLE_RATE},
     model::{
         ARCHIVE_BYTES, ARCHIVE_SHA256, INSTALLED_BYTES, LICENSE_IDS, MODEL_ID, SOURCE_URL,
         licenses, model_descriptor,
     },
-    store::{RuntimeAssets, Store, StoreError},
+    store::{RuntimeAssets, Store, StoreError, XnRuntimeAssets},
+    xn_bundle::APRIL_MODEL_ID,
+    xn_engine::XnPocketEngine,
 };
 
 const CONTROL_KIND: u8 = 1;
@@ -88,12 +90,23 @@ struct Request {
 }
 
 struct RuntimeState {
-    engine: Arc<PocketEngine>,
-    assets: RuntimeAssets,
+    backend: RuntimeBackend,
+    model_id: String,
     audio_deliveries: Vec<AudioDelivery>,
     max_text_code_points: usize,
     max_audio_bytes: usize,
     timeout: Duration,
+}
+
+enum RuntimeBackend {
+    Sherpa {
+        engine: Arc<PocketEngine>,
+        _assets: RuntimeAssets,
+    },
+    Xn {
+        engine: Arc<XnPocketEngine>,
+        _assets: Box<XnRuntimeAssets>,
+    },
 }
 
 struct ManagementState {
@@ -126,6 +139,8 @@ struct ActiveManagement {
 #[derive(Clone)]
 struct PreparePlan {
     id: String,
+    model_id: String,
+    voice_id: Option<String>,
     allow_network: bool,
     status: String,
 }
@@ -519,7 +534,7 @@ pub async fn run_stdio() -> Result<(), ProtocolFailure> {
                     match initialize(chosen_session, &request.params).await {
                         Ok(Initialized::Runtime(state)) => {
                             let audio_deliveries = state.audio_deliveries.clone();
-                            let schema = utterance_options_schema();
+                            let schema = utterance_options_schema_for_model(&state.model_id);
                             let digest = utterance_schema_digest(&schema)
                                 .map_err(|_| ProtocolFailure::Worker)?;
                             runtime = Some(state);
@@ -626,7 +641,7 @@ pub async fn run_stdio() -> Result<(), ProtocolFailure> {
                                     continue;
                                 }
                             };
-                        if let Err(error) = utterance.validate() {
+                        if let Err(error) = utterance.validate_for_model(&state.model_id) {
                             write_error(
                                 &mut output,
                                 &request.id,
@@ -821,28 +836,35 @@ fn start_synthesis(
     let (sender, chunks) = tokio::sync::mpsc::channel(4);
     let cancellation = Arc::new(AtomicBool::new(false));
     let worker_cancel = Arc::clone(&cancellation);
-    let engine = Arc::clone(&state.engine);
-    let reference = state.assets.reference.clone();
     let timeout = state.timeout;
     let (speed, seed) = utterance.effective_controls();
     let max_audio_bytes = match delivery {
         Delivery::Complete => state.max_audio_bytes.saturating_sub(44),
         Delivery::Incremental => state.max_audio_bytes,
     };
-    let task = tokio::task::spawn_blocking(move || {
-        engine.generate(
-            &text,
-            &reference,
-            GenerationOptions {
-                speed,
-                seed,
-                timeout,
-                max_audio_bytes,
-            },
-            worker_cancel,
-            sender,
-        )
-    });
+    let generation_options = GenerationOptions {
+        speed,
+        seed,
+        timeout,
+        max_audio_bytes,
+    };
+    let task = match &state.backend {
+        RuntimeBackend::Sherpa {
+            engine, _assets, ..
+        } => {
+            let engine = Arc::clone(engine);
+            let reference = _assets.reference.clone();
+            tokio::task::spawn_blocking(move || {
+                engine.generate(&text, &reference, generation_options, worker_cancel, sender)
+            })
+        }
+        RuntimeBackend::Xn { engine, .. } => {
+            let engine = Arc::clone(engine);
+            tokio::task::spawn_blocking(move || {
+                engine.generate(&text, generation_options, worker_cancel, sender)
+            })
+        }
+    };
     ActiveSynthesis {
         id,
         delivery,
@@ -1082,22 +1104,64 @@ async fn initialize(session: Session, value: &Value) -> Result<Initialized, Wire
         .model
         .clone()
         .ok_or_else(|| WireError::new("invalid_provider_options", "runtime model is missing"))?;
-    let store_copy = store.clone();
-    let assets =
-        tokio::task::spawn_blocking(move || store_copy.acquire_runtime(&model_id, &voice_id))
-            .await
-            .map_err(|_| WireError::new("internal", "runtime initialization failed"))?
-            .map_err(store_error)?;
-    let model_path = assets.model_dir.clone();
-    let engine_options = options.engine_options();
-    let engine =
-        tokio::task::spawn_blocking(move || PocketEngine::create(&model_path, engine_options))
-            .await
-            .map_err(|_| WireError::new("internal", "engine initialization failed"))?
-            .map_err(engine_error)?;
+    let backend = if model_id == APRIL_MODEL_ID {
+        let store_copy = store.clone();
+        let selected_model = model_id.clone();
+        let selected_voice = voice_id.clone();
+        let assets = tokio::task::spawn_blocking(move || {
+            store_copy.acquire_xn_runtime(&selected_model, &selected_voice)
+        })
+        .await
+        .map_err(|_| WireError::new("internal", "runtime initialization failed"))?
+        .map_err(store_error)?;
+        let config = assets.bundle.config_path();
+        let model = assets.bundle.model_path();
+        let tokenizer = assets.bundle.tokenizer_path();
+        let voice_state = assets.voice_state.clone();
+        let behavior = assets.bundle.behavior();
+        let num_threads = options.xn_num_threads();
+        let engine = tokio::task::spawn_blocking(move || {
+            XnPocketEngine::create(
+                &config,
+                &model,
+                &tokenizer,
+                &voice_state,
+                behavior,
+                num_threads,
+            )
+        })
+        .await
+        .map_err(|_| WireError::new("internal", "engine initialization failed"))?
+        .map_err(engine_error)?;
+        RuntimeBackend::Xn {
+            engine: Arc::new(engine),
+            _assets: Box::new(assets),
+        }
+    } else {
+        let store_copy = store.clone();
+        let selected_model = model_id.clone();
+        let selected_voice = voice_id.clone();
+        let assets = tokio::task::spawn_blocking(move || {
+            store_copy.acquire_runtime(&selected_model, &selected_voice)
+        })
+        .await
+        .map_err(|_| WireError::new("internal", "runtime initialization failed"))?
+        .map_err(store_error)?;
+        let model_path = assets.model_dir.clone();
+        let engine_options = options.engine_options();
+        let engine =
+            tokio::task::spawn_blocking(move || PocketEngine::create(&model_path, engine_options))
+                .await
+                .map_err(|_| WireError::new("internal", "engine initialization failed"))?
+                .map_err(engine_error)?;
+        RuntimeBackend::Sherpa {
+            engine: Arc::new(engine),
+            _assets: assets,
+        }
+    };
     Ok(Initialized::Runtime(RuntimeState {
-        engine: Arc::new(engine),
-        assets,
+        backend,
+        model_id,
         audio_deliveries,
         max_text_code_points,
         max_audio_bytes,
@@ -1242,7 +1306,9 @@ fn validation_result(state: &ManagementState) -> Value {
     let voice = state.provider_options.voice.as_deref();
     if model.is_none() {
         issues.push(json!({"severity":"error","code":"model_option_missing","message":"no Pocket TTS model is selected","remediation":"select a model from the models catalog"}));
-    } else if state.store.model_status() != "installed" {
+    } else if model == Some(APRIL_MODEL_ID) && state.store.xn_model_status() != "installed" {
+        issues.push(json!({"severity":"error","code":"model_missing","message":"the selected XN model bundle is not installed","remediation":"import a validated XN bundle with utterpipe-pocket-tts models import"}));
+    } else if model == Some(MODEL_ID) && state.store.model_status() != "installed" {
         issues.push(json!({"severity":"error","code":"model_missing","message":"the selected model is not installed","remediation":"run the host preparation command"}));
     }
     if let Some(voice) = voice {
@@ -1255,6 +1321,16 @@ fn validation_result(state: &ManagementState) -> Value {
         }
     } else {
         issues.push(json!({"severity":"error","code":"voice_option_missing","message":"no Pocket TTS voice is selected","remediation":"select or import a consented reference voice"}));
+    }
+    if issues.is_empty()
+        && model == Some(APRIL_MODEL_ID)
+        && let Some(voice) = voice
+        && state
+            .store
+            .acquire_xn_runtime(APRIL_MODEL_ID, voice)
+            .is_err()
+    {
+        issues.push(json!({"severity":"error","code":"voice_unprepared","message":"the selected voice has no valid state for this XN bundle","remediation":"reimport the voice or run provider preparation"}));
     }
     let status = if issues.is_empty() {
         "ready"
@@ -1297,20 +1373,33 @@ fn catalog_items(value: &Value, state: &ManagementState) -> Result<Value, WireEr
 
 fn model_catalog_items(scope: &str, state: &ManagementState) -> Vec<Value> {
     let status = state.store.model_status();
-    if (scope == "installed" && status != "installed")
-        || (scope == "available" && status != "available")
+    let mut items = Vec::new();
+    if !((scope == "installed" && status != "installed")
+        || (scope == "available" && status != "available"))
     {
-        return Vec::new();
+        let mut item = model_descriptor(status);
+        if let Some(object) = item.as_object_mut() {
+            object.remove("version");
+        }
+        item["description"] = Value::String("Pinned English Pocket TTS int8 model.".into());
+        item["provider_options_patch"] = json!({"model":MODEL_ID});
+        item["utterance_options_patch"] = json!({});
+        item["artifacts"] = json!([format!("model:{MODEL_ID}")]);
+        items.push(item);
     }
-    let mut item = model_descriptor(status);
-    if let Some(object) = item.as_object_mut() {
-        object.remove("version");
+    if state.store.xn_model_status() == "installed" && scope != "available" {
+        items.push(json!({
+            "id":APRIL_MODEL_ID,
+            "name":"Pocket TTS English April 2026 Q8 (XN)",
+            "status":"installed",
+            "languages":["en"],
+            "description":"Locally imported, manifest-verified XN Q8 bundle.",
+            "provider_options_patch":{"model":APRIL_MODEL_ID},
+            "utterance_options_patch":{},
+            "artifacts":[format!("model:{APRIL_MODEL_ID}")]
+        }));
     }
-    item["description"] = Value::String("Pinned English Pocket TTS int8 model.".into());
-    item["provider_options_patch"] = json!({"model":MODEL_ID});
-    item["utterance_options_patch"] = json!({});
-    item["artifacts"] = json!([format!("model:{MODEL_ID}")]);
-    vec![item]
+    items
 }
 
 fn voice_catalog_items(scope: &str, state: &ManagementState) -> Result<Vec<Value>, WireError> {
@@ -1375,6 +1464,44 @@ fn make_prepare_plan(
 ) -> Result<(PreparePlan, Value), WireError> {
     let params: PreparePlanParams = decode(value)?;
     let _ = params.refresh;
+    let model_id = state
+        .provider_options
+        .model
+        .clone()
+        .ok_or_else(|| WireError::new("invalid_provider_options", "no model is selected"))?;
+    if model_id == APRIL_MODEL_ID {
+        let voice_id = state.provider_options.voice.clone();
+        let status = xn_prepare_status(&state.store, voice_id.as_deref());
+        let id = format!("prepare-{}", PLAN_COUNTER.fetch_add(1, Ordering::Relaxed));
+        let (summary, actions) = match status.as_str() {
+            "ready" => ("XN model and prepared voice are already ready", Vec::new()),
+            "voice-unprepared" => (
+                "Prepare the selected reference voice for the installed XN bundle",
+                vec![json!({
+                    "kind":"prepare",
+                    "artifact":format!("voice:{}", voice_id.as_deref().unwrap_or_default())
+                })],
+            ),
+            "voice-missing" => (
+                "Import the selected reference voice before provider preparation",
+                Vec::new(),
+            ),
+            _ => (
+                "Import a validated XN bundle with the provider CLI before host preparation",
+                Vec::new(),
+            ),
+        };
+        return Ok((
+            PreparePlan {
+                id: id.clone(),
+                model_id,
+                voice_id,
+                allow_network: false,
+                status,
+            },
+            json!({"plan_id":id,"summary":summary,"actions":actions,"licenses":[]}),
+        ));
+    }
     let status = state.store.model_status().to_owned();
     let id = format!("prepare-{}", PLAN_COUNTER.fetch_add(1, Ordering::Relaxed));
     let actions = if status == "installed" {
@@ -1393,6 +1520,8 @@ fn make_prepare_plan(
     Ok((
         PreparePlan {
             id: id.clone(),
+            model_id,
+            voice_id: state.provider_options.voice.clone(),
             allow_network: params.allow_network,
             status,
         },
@@ -1414,6 +1543,68 @@ fn start_prepare_apply(
     let plan = plan
         .filter(|plan| plan.id == params.plan_id)
         .ok_or_else(|| WireError::new("plan_stale", "prepare plan is absent or stale"))?;
+    if plan.model_id == APRIL_MODEL_ID {
+        let current = xn_prepare_status(&state.store, plan.voice_id.as_deref());
+        if current != plan.status {
+            return Err(WireError::new(
+                "plan_stale",
+                "XN model or voice state changed after planning",
+            ));
+        }
+        if plan.status == "model-missing" {
+            return Err(WireError::new(
+                "resource_missing",
+                "import a validated XN bundle with utterpipe-pocket-tts models import",
+            ));
+        }
+        let Some(voice_id) = plan.voice_id.clone() else {
+            return Err(WireError::new(
+                "resource_missing",
+                "import and select a reference voice before preparation",
+            ));
+        };
+        if plan.status == "voice-missing" {
+            return Err(WireError::new(
+                "resource_missing",
+                "the selected reference voice is not installed",
+            ));
+        }
+        let cancellation = CancellationToken::new();
+        if plan.status == "ready" {
+            let task = tokio::spawn(async move { Ok(json!({"status":"ready","installed":[]})) });
+            return Ok(ActiveManagement {
+                id: String::new(),
+                cancellation,
+                task,
+            });
+        }
+        let store = state.store.clone();
+        let mutation = store.begin_mutation().map_err(store_error)?;
+        if xn_prepare_status(&store, Some(&voice_id)) != plan.status {
+            return Err(WireError::new(
+                "plan_stale",
+                "XN model or voice state changed while acquiring the mutation lease",
+            ));
+        }
+        let task_cancel = cancellation.clone();
+        let threads = state.provider_options.xn_num_threads();
+        let task = tokio::task::spawn_blocking(move || {
+            store
+                .prepare_xn_voice_locked(APRIL_MODEL_ID, &voice_id, threads, &mutation, || {
+                    task_cancel.is_cancelled()
+                })
+                .map_err(store_error)?;
+            Ok(json!({
+                "status":"ready",
+                "installed":[format!("voice:{voice_id}")]
+            }))
+        });
+        return Ok(ActiveManagement {
+            id: String::new(),
+            cancellation,
+            task,
+        });
+    }
     if state.store.model_status() != plan.status {
         return Err(WireError::new(
             "plan_stale",
@@ -1476,6 +1667,25 @@ fn start_prepare_apply(
         cancellation,
         task,
     })
+}
+
+fn xn_prepare_status(store: &Store, voice_id: Option<&str>) -> String {
+    if store.xn_model_status() != "installed" {
+        return "model-missing".to_owned();
+    }
+    let Some(voice_id) = voice_id else {
+        return "voice-missing".to_owned();
+    };
+    let voice_present = store
+        .voice_catalog()
+        .is_ok_and(|voices| voices.iter().any(|voice| voice["id"] == voice_id));
+    if !voice_present {
+        "voice-missing".to_owned()
+    } else if store.acquire_xn_runtime(APRIL_MODEL_ID, voice_id).is_ok() {
+        "ready".to_owned()
+    } else {
+        "voice-unprepared".to_owned()
+    }
 }
 
 async fn download_archive(
@@ -1610,7 +1820,7 @@ fn make_remove_plan(
     for artifact in &params.artifacts {
         let token = state.store.artifact_token(artifact).map_err(store_error)?;
         tokens.insert(artifact.clone(), token);
-        let reclaimed = if artifact.starts_with("model:") {
+        let reclaimed = if artifact == &format!("model:{MODEL_ID}") {
             INSTALLED_BYTES
         } else {
             0
@@ -1706,6 +1916,9 @@ fn start_asset_import(
     let id = params.requested_id;
     let result_id = id.clone();
     let store = state.store.clone();
+    let prepare_xn = state.provider_options.model.as_deref() == Some(APRIL_MODEL_ID)
+        && state.store.xn_model_status() == "installed";
+    let xn_threads = state.provider_options.xn_num_threads();
     let mutation = store.begin_mutation().map_err(store_error)?;
     let source_bytes = std::fs::symlink_metadata(&source)
         .map_err(|_| WireError::new("resource_missing", "voice source is unavailable"))?;
@@ -1723,6 +1936,13 @@ fn start_asset_import(
                 task_cancel.is_cancelled()
             })
             .map_err(store_error)?;
+        if prepare_xn {
+            store
+                .prepare_xn_voice_locked(APRIL_MODEL_ID, &id, xn_threads, &mutation, || {
+                    task_cancel.is_cancelled()
+                })
+                .map_err(store_error)?;
+        }
         Ok(json!({
             "artifact_id":format!("voice:{result_id}"),
             "status":"installed",

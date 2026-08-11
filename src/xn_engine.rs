@@ -100,13 +100,16 @@ impl XnVoiceEncoder {
     ///
     /// Returns a stable cancellation, I/O, or inference error. Callers should
     /// write into private staging and publish the state atomically.
-    pub fn prepare_voice(
+    pub fn prepare_voice<F>(
         &self,
         reference: &ReferenceAudio,
         output_path: &Path,
-        cancellation: &AtomicBool,
-    ) -> Result<(), EngineError> {
-        check_cancelled(cancellation)?;
+        cancelled: F,
+    ) -> Result<(), EngineError>
+    where
+        F: Fn() -> bool,
+    {
+        check_cancelled(&cancelled)?;
         let minimum_samples =
             usize::try_from(reference.sample_rate).map_err(|_| EngineError::InvalidOptions)?;
         let maximum_samples = minimum_samples
@@ -124,13 +127,13 @@ impl XnVoiceEncoder {
             .collect();
         ptts::utils::normalize_loudness(&mut samples, reference.sample_rate)
             .map_err(|_| EngineError::Failed)?;
-        check_cancelled(cancellation)?;
+        check_cancelled(&cancelled)?;
         if reference.sample_rate != self.sample_rate {
             samples = resample(
                 &samples,
                 reference.sample_rate,
                 self.sample_rate,
-                cancellation,
+                &cancelled,
             )?;
         }
         let sample_limit =
@@ -139,7 +142,7 @@ impl XnVoiceEncoder {
         if samples.is_empty() {
             return Err(EngineError::Failed);
         }
-        check_cancelled(cancellation)?;
+        check_cancelled(&cancelled)?;
         let audio = Tensor::from_vec(samples, (1, 1, ()), &xn::CPU)
             .and_then(|value| value.to::<f32>())
             .map_err(|_| EngineError::Failed)?;
@@ -147,7 +150,7 @@ impl XnVoiceEncoder {
             .encoder
             .encode_audio(&audio)
             .map_err(|_| EngineError::Failed)?;
-        check_cancelled(cancellation)?;
+        check_cancelled(&cancelled)?;
         let tensors =
             std::collections::HashMap::from([("emb".to_owned(), xn::TypedTensor::F32(voice))]);
         let metadata = std::collections::HashMap::from([(
@@ -156,7 +159,7 @@ impl XnVoiceEncoder {
         )]);
         xn::safetensors::save_with_data_info(&tensors, Some(metadata), output_path)
             .map_err(|_| EngineError::Failed)?;
-        check_cancelled(cancellation)
+        check_cancelled(&cancelled)
     }
 }
 
@@ -611,20 +614,23 @@ fn check_stop(
     }
 }
 
-fn check_cancelled(cancellation: &AtomicBool) -> Result<(), EngineError> {
-    if cancellation.load(Ordering::Acquire) {
+fn check_cancelled(cancelled: &impl Fn() -> bool) -> Result<(), EngineError> {
+    if cancelled() {
         Err(EngineError::Cancelled)
     } else {
         Ok(())
     }
 }
 
-fn resample(
+fn resample<F>(
     input: &[f32],
     input_rate: u32,
     output_rate: u32,
-    cancellation: &AtomicBool,
-) -> Result<Vec<f32>, EngineError> {
+    cancelled: &F,
+) -> Result<Vec<f32>, EngineError>
+where
+    F: Fn() -> bool,
+{
     let input_rate = usize::try_from(input_rate).map_err(|_| EngineError::Failed)?;
     let output_rate = usize::try_from(output_rate).map_err(|_| EngineError::Failed)?;
     let expected = input
@@ -643,7 +649,7 @@ fn resample(
     let mut buffer = resampler.output_buffer_allocate(true);
     let mut position = 0;
     while position + resampler.input_frames_next() < input.len() {
-        check_cancelled(cancellation)?;
+        check_cancelled(cancelled)?;
         let (consumed, produced) = resampler
             .process_into_buffer(&[&input[position..]], &mut buffer, None)
             .map_err(|_| EngineError::Failed)?;
@@ -651,13 +657,13 @@ fn resample(
         output.extend_from_slice(&buffer[0][..produced]);
     }
     if position < input.len() {
-        check_cancelled(cancellation)?;
+        check_cancelled(cancelled)?;
         let (_, produced) = resampler
             .process_partial_into_buffer(Some(&[&input[position..]]), &mut buffer, None)
             .map_err(|_| EngineError::Failed)?;
         output.extend_from_slice(&buffer[0][..produced]);
     }
-    check_cancelled(cancellation)?;
+    check_cancelled(cancelled)?;
     Ok(output)
 }
 
