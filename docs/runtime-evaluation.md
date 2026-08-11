@@ -208,6 +208,17 @@ comparisons also passed at 1.80 on Windows and 1.85 on Linux, all below the
 known failure threshold of 20. This is promising severe-artifact regression
 evidence, not an intelligibility or perceptual-quality certification.
 
+The official XN voice-preparation utility also encoded three additional pinned
+CC0 Voice-Zero references: Bill Boerst, Peter Yearsley, and Stuart Bell. Q8 and
+f32 both synthesized all three. Peter and Stuart had FP32-relative
+high-frequency ratios of 1.12 and 0.99. Bill at seed 42 was a review outlier:
+its ratio was 91.98, but the absolute high-frequency fraction was 0.0145 and
+remained below the detector's 0.02 failure floor. Repeating Bill at seeds 7 and
+2026 produced ratios of 1.44 and 0.60. The outlier therefore does not follow the
+Q8 profile consistently, but its saved Q8/FP32 pair remains a mandatory human
+listening sample. This demonstrates why the detector needs both relative and
+absolute calibration and cannot replace listening.
+
 At a fixed seed, each host produced byte-identical PCM across its own repeated
 runs and thread sweep. PCM hashes differed across hosts, so XN must not promise
 cross-platform acoustic reproducibility. Every after-first-frame engine stop
