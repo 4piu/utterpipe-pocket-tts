@@ -532,8 +532,7 @@ fn warn_large_local_file(path: &Path) {
 
 fn warn_large_input(bytes: u64) {
     eprintln!(
-        "warning: voice source is unusually large ({} bytes); import will continue and remains cancellable",
-        bytes
+        "warning: voice source is unusually large ({bytes} bytes); import will continue and remains cancellable"
     );
 }
 

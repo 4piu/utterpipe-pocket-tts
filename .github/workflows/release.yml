@@ -169,8 +169,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          notes=()
+          notes_file="docs/release-$GITHUB_REF_NAME.md"
+          if [[ -f "$notes_file" ]]; then
+            notes+=(--notes "$(cat "$notes_file")")
+          fi
           gh release create "$GITHUB_REF_NAME" dist/* \
             --repo "$GITHUB_REPOSITORY" \
             --verify-tag \
             --generate-notes \
+            "${notes[@]}" \
             --title "UtterPipe Pocket TTS $GITHUB_REF_NAME"
