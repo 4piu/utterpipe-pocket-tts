@@ -690,7 +690,7 @@ fn peak_rss_bytes() -> Option<u64> {
     // SAFETY: GetCurrentProcess returns a valid pseudo-handle for this process,
     // and counters points to a complete writable structure of the supplied size.
     let success = unsafe { K32GetProcessMemoryInfo(GetCurrentProcess(), &mut counters, size) };
-    (success != 0).then(|| counters.PeakWorkingSetSize as u64)
+    (success != 0).then_some(counters.PeakWorkingSetSize as u64)
 }
 
 #[cfg(not(any(unix, windows)))]
