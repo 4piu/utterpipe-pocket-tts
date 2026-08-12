@@ -132,6 +132,10 @@ jobs:
           cargo fetch --locked
           cargo install cargo-about --version 0.9.1 --features cli --locked
           cargo about generate --locked --offline --fail --all-features \
+            --target x86_64-unknown-linux-gnu \
+            --target aarch64-apple-darwin \
+            --target x86_64-apple-darwin \
+            --target x86_64-pc-windows-msvc \
             about.hbs --output-file "$RUNNER_TEMP/THIRD_PARTY_LICENSES.generated.html"
           tr -d '\r' < "$RUNNER_TEMP/THIRD_PARTY_LICENSES.generated.html" \
             > "$RUNNER_TEMP/THIRD_PARTY_LICENSES.normalized.html"
