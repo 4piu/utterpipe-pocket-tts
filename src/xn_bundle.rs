@@ -46,6 +46,7 @@ pub struct BundleFile {
 #[serde(deny_unknown_fields)]
 pub struct BundleBehavior {
     pub temperature: f32,
+    pub output_gain: f32,
     pub pad_with_spaces_for_short_inputs: bool,
     pub remove_semicolons: bool,
     pub frames_after_eos_offset: usize,
@@ -55,6 +56,7 @@ impl From<&BundleBehavior> for XnModelBehavior {
     fn from(value: &BundleBehavior) -> Self {
         Self {
             temperature: value.temperature,
+            output_gain: value.output_gain,
             pad_with_spaces_for_short_inputs: value.pad_with_spaces_for_short_inputs,
             remove_semicolons: value.remove_semicolons,
             frames_after_eos_offset: value.frames_after_eos_offset,
@@ -308,6 +310,9 @@ fn valid_behavior(behavior: &BundleBehavior) -> bool {
     behavior.temperature.is_finite()
         && behavior.temperature > 0.0
         && behavior.temperature <= 4.0
+        && behavior.output_gain.is_finite()
+        && behavior.output_gain > 0.0
+        && behavior.output_gain <= 1.0
         && behavior.frames_after_eos_offset <= 64
 }
 
@@ -481,6 +486,7 @@ mod tests {
             },
             behavior: BundleBehavior {
                 temperature: 0.3,
+                output_gain: 0.9,
                 pad_with_spaces_for_short_inputs: false,
                 remove_semicolons: false,
                 frames_after_eos_offset: 2,

@@ -8,7 +8,9 @@ audio, completion, RTF, deterministic PCM identity, native peak RSS where the
 OS exposes it, and after-first-audio cancellation behavior. Each measured run
 also reports the decoded float minimum, maximum, absolute peak, and counts at or
 outside `[-1, 1]` before PCM16 conversion so clipping can be distinguished from
-integer endpoint rounding.
+integer endpoint rounding. Those diagnostics are always measured before
+`--output-gain`; the saved WAV applies that fixed gain sample by sample. Use
+`--output-gain 0.9` when reproducing the April provider profile.
 
 The dependency is pinned to project fork commit
 `4dbd8d6832cf4e093d08a1bd4666a08783345e7b`, stacked on fork commit
@@ -32,6 +34,7 @@ cargo run --locked --release -- \
   --voice-state /absolute/voice.safetensors \
   --precision q8 \
   --temperature 0.3 \
+  --output-gain 0.9 \
   --pad-with-spaces-for-short-inputs false \
   --frames-after-eos-offset 2 \
   --threads 2 \

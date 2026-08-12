@@ -274,7 +274,8 @@ bundle directory contains the three runtime payloads `model.gguf`,
   immutable source revision;
 - XN engine ID, project-fork revision, XN version, Q8_0 precision, and April
   compatibility class;
-- temperature and text/post-EOS behavior for that model generation;
+- temperature, fixed streaming-safe output gain, and text/post-EOS behavior for
+  that model generation;
 - every disclosure ID, name, and HTTPS URL; and
 - exact byte length and lowercase SHA-256 for all three runtime payloads.
 
@@ -473,10 +474,14 @@ interpret XML, SSML, markdown, or expression tags and does not log the text.
 
 Generation uses the initialized model, reference voice, effective `speed`, `seed`, and
 `max_reference_audio_seconds`. Output is mono 24,000 Hz float PCM from the
-engine, converted sample-by-sample to little-endian PCM16. Values are clamped to
-`[-1.0, 1.0]`; non-finite samples fail synthesis; negative full scale maps to
-`-32768` and positive full scale to `32767`. The provider applies no playback
-gain and performs no device-rate resampling.
+engine. XN bundles declare a fixed `output_gain` in `(0, 1]`, applied to every
+decoded sample before conversion; the verified April bundle uses `0.9` to
+provide streaming-safe headroom without whole-utterance peak normalization or
+limiting. Samples are then converted to little-endian PCM16. Values are clamped
+to `[-1.0, 1.0]`; non-finite samples fail synthesis; negative full scale maps
+to `-32768` and positive full scale to `32767`. The provider applies no
+playback-device gain and performs no device-rate resampling. Complete and
+incremental paths use the same scaled PCM chunks.
 
 For incremental delivery, the engine runs on a dedicated blocking thread. Each
 callback contains newly generated consecutive samples. It converts and submits

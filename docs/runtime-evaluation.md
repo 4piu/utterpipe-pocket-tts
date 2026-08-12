@@ -299,10 +299,25 @@ bad positive control with a 31.9-times f32 high-frequency ratio and 9.9%
 absolute high-frequency energy. The natural-voice gate nevertheless failed on
 Peter Yearsley because Q8 contained 77 full-scale PCM16 samples out of 80,640
 and f32 contained 80. This is not a Q8-only regression, but it means neither
-profile currently satisfies a zero-clipping release policy for that voice. Do
-not weaken the policy or silently discard the case: inspect pre-conversion
-float peaks and choose a documented output-headroom/limiting policy before
-catalog promotion.
+unscaled profile satisfies a zero-clipping release policy for that voice.
+Pre-conversion instrumentation confirmed real decoder overshoot rather than
+PCM endpoint rounding: at the same seed the exact April Q8 decoder reached
+`1.0863183` with eight samples outside `[-1, 1]`, while f32 reached `1.0824773`
+with six samples outside the range. This shared behavior is not a Q8
+regression.
+
+The experimental April bundle now declares a fixed `0.9` output gain. It is
+applied to each decoded float before PCM16 conversion, so it is safe for the
+bounded streaming path and yields byte-identical complete and incremental
+audio. It does not inspect or normalize a whole utterance. Re-running the Q8
+Peter case produced a PCM maximum of 32,036 and zero full-scale samples while
+retaining the raw pre-gain peak in the diagnostic report. This is the
+provisional headroom policy, not proof for catalog promotion: the full corpus
+must demonstrate that the fixed margin covers every supported voice, seed, and
+stress sentence without concealing a synthesis defect. The optimized ignored
+real-model integration test also passed with a freshly verified full April Q8
+bundle carrying this field, including install, voice preparation, bounded
+streaming, output rejection, cancellation, warm reuse, and lease cleanup.
 
 This three-case smoke is not the release gate. It has one replay per case, one
 seed, only the short status sentence, no ASR transcripts, and no perceptual

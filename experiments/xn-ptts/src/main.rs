@@ -88,6 +88,9 @@ struct Args {
     /// Sampling seed reset before every synthesis.
     #[arg(long, default_value_t = 42)]
     seed: u64,
+    /// Fixed gain applied to decoded floats before PCM16 conversion.
+    #[arg(long, default_value_t = 1.0)]
+    output_gain: f32,
     /// Optionally save the final measured synthesis as PCM16 WAV.
     #[arg(long)]
     output: Option<PathBuf>,
@@ -251,7 +254,7 @@ where
     for iteration in 1..=args.iterations {
         let result = synthesize(&prepared, args.temperature, args.seed, false)?;
         let float_metrics = float_metrics(&result.chunks)?;
-        let pcm = chunks_to_pcm16(&result.chunks)?;
+        let pcm = chunks_to_pcm16(&result.chunks, args.output_gain)?;
         let audio_seconds = pcm.len() as f64 / 2.0 / SAMPLE_RATE as f64;
         let completion_ms = milliseconds(result.completion);
         runs.push(RunMeasurement {
@@ -275,7 +278,7 @@ where
     let mut cancellations = Vec::with_capacity(args.cancellation_iterations as usize);
     for iteration in 1..=args.cancellation_iterations {
         let result = synthesize(&prepared, args.temperature, args.seed, true)?;
-        let pcm = chunks_to_pcm16(&result.chunks)?;
+        let pcm = chunks_to_pcm16(&result.chunks, args.output_gain)?;
         cancellations.push(CancellationMeasurement {
             iteration,
             first_audio_ms: milliseconds(result.first_audio),
@@ -324,6 +327,7 @@ where
             "frames_after_eos_offset": args.frames_after_eos_offset,
             "effective_frames_after_eos": prepared.frames_after_eos,
             "seed": args.seed,
+            "output_gain": args.output_gain,
             "sample_rate_hz": SAMPLE_RATE,
             "pipeline_capacity_frames": 2,
         },
@@ -502,6 +506,12 @@ fn load_voice<Q: BackendQ>(path: &Path, device: Q::B) -> Result<Tensor<Q::T, Q::
 }
 
 fn validate_paths(args: &Args) -> Result<()> {
+    if !args.output_gain.is_finite()
+        || args.output_gain == 0.0
+        || !(0.0..=1.0).contains(&args.output_gain)
+    {
+        bail!("output gain must be finite and in (0, 1]");
+    }
     for (label, path) in [
         ("config", &args.config),
         ("weights", &args.weights),
@@ -555,14 +565,14 @@ fn ignored_weight(name: &str) -> bool {
         || name == "mimi.downsample.conv.conv.weight"
 }
 
-fn chunks_to_pcm16(chunks: &[Vec<f32>]) -> Result<Vec<u8>> {
+fn chunks_to_pcm16(chunks: &[Vec<f32>], output_gain: f32) -> Result<Vec<u8>> {
     let sample_count = chunks.iter().map(Vec::len).sum::<usize>();
     let mut pcm = Vec::with_capacity(sample_count * 2);
     for &sample in chunks.iter().flatten() {
         if !sample.is_finite() {
             bail!("XN produced a non-finite sample");
         }
-        let sample = sample.clamp(-1.0, 1.0);
+        let sample = (sample * output_gain).clamp(-1.0, 1.0);
         let value = if sample <= -1.0 {
             i16::MIN
         } else if sample >= 1.0 {
@@ -718,13 +728,23 @@ mod tests {
     #[test]
     fn pcm_conversion_matches_provider_edges() {
         assert_eq!(
-            chunks_to_pcm16(&[vec![-1.0, 0.0, 1.0]]).unwrap(),
+            chunks_to_pcm16(&[vec![-1.0, 0.0, 1.0]], 1.0).unwrap(),
             [
                 i16::MIN.to_le_bytes(),
                 0_i16.to_le_bytes(),
                 i16::MAX.to_le_bytes()
             ]
             .concat()
+        );
+        let scaled = chunks_to_pcm16(&[vec![-1.1, 1.1]], 0.9).unwrap();
+        let values: Vec<_> = scaled
+            .chunks_exact(2)
+            .map(|sample| i16::from_le_bytes([sample[0], sample[1]]))
+            .collect();
+        assert!(
+            values
+                .iter()
+                .all(|sample| !matches!(*sample, i16::MIN | i16::MAX))
         );
     }
 

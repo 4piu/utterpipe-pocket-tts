@@ -166,6 +166,7 @@ impl XnVoiceEncoder {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct XnModelBehavior {
     pub temperature: f32,
+    pub output_gain: f32,
     pub pad_with_spaces_for_short_inputs: bool,
     pub remove_semicolons: bool,
     pub frames_after_eos_offset: usize,
@@ -176,6 +177,7 @@ impl XnModelBehavior {
     pub const fn april_2026_english() -> Self {
         Self {
             temperature: 0.3,
+            output_gain: 0.9,
             pad_with_spaces_for_short_inputs: false,
             remove_semicolons: false,
             frames_after_eos_offset: 2,
@@ -185,6 +187,9 @@ impl XnModelBehavior {
     fn validate(self) -> Result<Self, EngineError> {
         if !self.temperature.is_finite()
             || self.temperature <= 0.0
+            || !self.output_gain.is_finite()
+            || !(0.0..=1.0).contains(&self.output_gain)
+            || self.output_gain == 0.0
             || self.frames_after_eos_offset > 64
         {
             return Err(EngineError::InvalidOptions);
@@ -405,6 +410,7 @@ impl XnPocketEngine {
         let (latent_sender, latent_receiver) = mpsc::sync_channel(PIPELINE_CAPACITY);
         let model = Arc::clone(&self.model);
         let mut mimi_state = self.base_mimi_state.clone();
+        let output_gain = self.behavior.output_gain;
         let decoder_cancel = Arc::clone(&cancellation);
         let decoder = std::thread::spawn(move || -> Result<ChunkSummary, EngineError> {
             let mut byte_length = 0_usize;
@@ -414,11 +420,12 @@ impl XnPocketEngine {
                 let audio = model
                     .decode_latent(&latent, &mut mimi_state)
                     .map_err(|_| EngineError::Failed)?;
-                let samples = audio
+                let mut samples = audio
                     .narrow(0, ..1)
                     .and_then(|value| value.contiguous())
                     .and_then(|value| value.to_vec())
                     .map_err(|_| EngineError::Failed)?;
+                samples.iter_mut().for_each(|sample| *sample *= output_gain);
                 let pcm = audio::floats_to_pcm16(&samples).map_err(|_| EngineError::Failed)?;
                 if pcm.is_empty() || pcm.len() > max_audio_bytes.saturating_sub(byte_length) {
                     return Err(EngineError::OutputTooLarge);
@@ -740,6 +747,11 @@ mod tests {
     fn behavior_validation_rejects_unbounded_values() {
         let mut behavior = XnModelBehavior::april_2026_english();
         behavior.frames_after_eos_offset = 65;
+        assert_eq!(behavior.validate(), Err(EngineError::InvalidOptions));
+        behavior.frames_after_eos_offset = 2;
+        behavior.output_gain = 0.0;
+        assert_eq!(behavior.validate(), Err(EngineError::InvalidOptions));
+        behavior.output_gain = 1.01;
         assert_eq!(behavior.validate(), Err(EngineError::InvalidOptions));
     }
 }
