@@ -292,6 +292,25 @@ Q8 profile consistently, but its saved Q8/FP32 pair remains a mandatory human
 listening sample. This demonstrates why the detector needs both relative and
 absolute calibration and cannot replace listening.
 
+The first provider-neutral `utterpipe-acoustic-gate` smoke re-evaluated those
+three Q8/f32 pairs as bounded PCM16 WAV inputs. The calibrated severe-overlay
+screen passed all three; XN Q4_K correctly failed the same detector as a known
+bad positive control with a 31.9-times f32 high-frequency ratio and 9.9%
+absolute high-frequency energy. The natural-voice gate nevertheless failed on
+Peter Yearsley because Q8 contained 77 full-scale PCM16 samples out of 80,640
+and f32 contained 80. This is not a Q8-only regression, but it means neither
+profile currently satisfies a zero-clipping release policy for that voice. Do
+not weaken the policy or silently discard the case: inspect pre-conversion
+float peaks and choose a documented output-headroom/limiting policy before
+catalog promotion.
+
+This three-case smoke is not the release gate. It has one replay per case, one
+seed, only the short status sentence, no ASR transcripts, and no perceptual
+metric. The reusable tool now represents absent required evidence as
+`incomplete`, retains failures/outliers plus a stable listening sample, and
+never copies transcript text or local paths into its report. The full corpus
+and metric selection remain open.
+
 Listener acceptance on 2026-08-10 passed every saved XN sample, including the
 matched Q8/f32 outputs from all three operating systems and all four natural
 voices. No noticeable quality difference was heard between XN Q8 and f32. Both

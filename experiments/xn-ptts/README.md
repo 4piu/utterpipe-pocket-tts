@@ -5,7 +5,10 @@ production provider integration. It keeps one model and one prepared voice
 state warm, resets the sampling seed for every run, pipelines autoregressive
 generation into a bounded two-frame decoder queue, and reports first decoded
 audio, completion, RTF, deterministic PCM identity, native peak RSS where the
-OS exposes it, and after-first-audio cancellation behavior.
+OS exposes it, and after-first-audio cancellation behavior. Each measured run
+also reports the decoded float minimum, maximum, absolute peak, and counts at or
+outside `[-1, 1]` before PCM16 conversion so clipping can be distinguished from
+integer endpoint rounding.
 
 The dependency is pinned to project fork commit
 `4dbd8d6832cf4e093d08a1bd4666a08783345e7b`, stacked on fork commit

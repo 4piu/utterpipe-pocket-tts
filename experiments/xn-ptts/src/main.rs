@@ -103,6 +103,11 @@ struct RunMeasurement {
     pcm_bytes: usize,
     decoded_frames: usize,
     pcm_sha256: String,
+    float_peak_absolute: f32,
+    float_minimum: f32,
+    float_maximum: f32,
+    float_samples_at_or_outside_unit_interval: usize,
+    float_samples_outside_unit_interval: usize,
 }
 
 #[derive(Serialize)]
@@ -245,6 +250,7 @@ where
     let mut saved_pcm = None;
     for iteration in 1..=args.iterations {
         let result = synthesize(&prepared, args.temperature, args.seed, false)?;
+        let float_metrics = float_metrics(&result.chunks)?;
         let pcm = chunks_to_pcm16(&result.chunks)?;
         let audio_seconds = pcm.len() as f64 / 2.0 / SAMPLE_RATE as f64;
         let completion_ms = milliseconds(result.completion);
@@ -257,6 +263,11 @@ where
             pcm_bytes: pcm.len(),
             decoded_frames: result.chunks.len(),
             pcm_sha256: format!("{:x}", Sha256::digest(&pcm)),
+            float_peak_absolute: float_metrics.peak_absolute,
+            float_minimum: float_metrics.minimum,
+            float_maximum: float_metrics.maximum,
+            float_samples_at_or_outside_unit_interval: float_metrics.at_or_outside_unit_interval,
+            float_samples_outside_unit_interval: float_metrics.outside_unit_interval,
         });
         saved_pcm = Some(pcm);
     }
@@ -564,6 +575,42 @@ fn chunks_to_pcm16(chunks: &[Vec<f32>]) -> Result<Vec<u8>> {
     Ok(pcm)
 }
 
+struct FloatMetrics {
+    peak_absolute: f32,
+    minimum: f32,
+    maximum: f32,
+    at_or_outside_unit_interval: usize,
+    outside_unit_interval: usize,
+}
+
+fn float_metrics(chunks: &[Vec<f32>]) -> Result<FloatMetrics> {
+    let mut minimum = f32::INFINITY;
+    let mut maximum = f32::NEG_INFINITY;
+    let mut at_or_outside = 0;
+    let mut outside = 0;
+    let mut count = 0;
+    for &sample in chunks.iter().flatten() {
+        if !sample.is_finite() {
+            bail!("XN produced a non-finite sample");
+        }
+        minimum = minimum.min(sample);
+        maximum = maximum.max(sample);
+        at_or_outside += usize::from(sample.abs() >= 1.0);
+        outside += usize::from(sample.abs() > 1.0);
+        count += 1;
+    }
+    if count == 0 {
+        bail!("XN produced no samples");
+    }
+    Ok(FloatMetrics {
+        peak_absolute: minimum.abs().max(maximum.abs()),
+        minimum,
+        maximum,
+        at_or_outside_unit_interval: at_or_outside,
+        outside_unit_interval: outside,
+    })
+}
+
 fn write_wav(path: &Path, pcm: &[u8]) -> Result<()> {
     let payload_size = u32::try_from(pcm.len()).context("WAV payload is too large")?;
     let riff_size = 36_u32
@@ -679,5 +726,17 @@ mod tests {
             ]
             .concat()
         );
+    }
+
+    #[test]
+    fn float_metrics_distinguish_endpoints_from_overshoot() {
+        let metrics = float_metrics(&[vec![-1.1, -1.0, 0.0, 0.9, 1.0]]).unwrap();
+        assert_eq!(metrics.minimum, -1.1);
+        assert_eq!(metrics.maximum, 1.0);
+        assert_eq!(metrics.peak_absolute, 1.1);
+        assert_eq!(metrics.at_or_outside_unit_interval, 3);
+        assert_eq!(metrics.outside_unit_interval, 1);
+        assert!(float_metrics(&[vec![f32::NAN]]).is_err());
+        assert!(float_metrics(&[]).is_err());
     }
 }
