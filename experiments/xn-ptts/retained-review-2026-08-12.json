@@ -1,0 +1,59 @@
+{
+  "schema": "utterpipe.pocket-tts.human-review/1",
+  "date": "2026-08-12",
+  "reviewer": "project-maintainer",
+  "candidate": "xn-april-q8-provider-gain065",
+  "baseline": "xn-april-fp32-control-gain065",
+  "source_evidence": {
+    "acoustic_manifest_sha256": "c79b605d16bc066cd4e1343bc8420b3102199d48055e6bb43f08632515cb181f",
+    "acoustic_report_sha256": "00f8e209a57bf9ef6f2e7be58fa21dba1dc7fa5484353c80fb57f70aa9c05acd",
+    "review_manifest_sha256": "04a96a6a45df3fad576741b8f950c232e0a384da6f902ce292e781a7950d4dd9"
+  },
+  "method": {
+    "order": ["candidate", "baseline"],
+    "acceptance": "Every candidate must remain intelligible and free of significant candidate-only artifacts relative to its full-precision baseline."
+  },
+  "cases": [
+    {
+      "case_id": "upstream-numbers-voice-zero-caro-davy-seed42",
+      "reason": "worst_high_frequency_outlier",
+      "candidate_sha256": "fec6e76394cd1cd1ba216203b78305ef6379af69f0bc6ea40483bd81b720d660",
+      "baseline_sha256": "5b243bc23a9764a32634c3e3cf27deae8efcd7bfaa6267800a69005770cf3db5",
+      "rating": "clean",
+      "note": "Beautiful voice without any problem."
+    },
+    {
+      "case_id": "upstream-numbers-voice-zero-stuart-bell-seed42",
+      "reason": "stable_pseudorandom_sample",
+      "candidate_sha256": "8f2da80b705d8dbe8f1bb2a97c3651800abd2b1acc34c49e80c9198f70f6d4fc",
+      "baseline_sha256": "4ad9560db357c79653281326a5a2ff4e8bfb8887cf619e981567443bba3365b7",
+      "rating": "clean",
+      "note": "Clean and clear."
+    },
+    {
+      "case_id": "upstream-numbers-voice-zero-stuart-bell-seed7",
+      "reason": "worst_perceptual_outlier",
+      "candidate_sha256": "0094ed7523ce797e0759bc5df42fa35d4ba5ab5fd0bb70ff63e400da364ae89a",
+      "baseline_sha256": "613ff61f44ed5c02689d73fb563cf533de7462fbdcc4f3f1c3ee3efa8d175c3f",
+      "rating": "acceptable_minor_defect",
+      "note": "The candidate has a minor defect but remains good enough; the full-precision baseline is clear."
+    },
+    {
+      "case_id": "upstream-prose-voice-zero-stuart-bell-seed2026",
+      "reason": "worst_perceptual_outlier",
+      "candidate_sha256": "59a3b4401f1bd6ea52900d99c74ff4caf1b57bf0cffa864e1fc45b5cd87d9a7f",
+      "baseline_sha256": "ebbbfeb1d197c659da66d760fcbca034ff078c366ffe2b1ca8ff8fb3ac212c56",
+      "rating": "acceptable_minor_defect",
+      "note": "Acceptable with no significant issue; a tiny candidate-only defect was audible."
+    },
+    {
+      "case_id": "upstream-punctuation-voice-zero-caro-davy-seed42",
+      "reason": "worst_high_frequency_outlier",
+      "candidate_sha256": "3b95b584b89955d711e8753f599817de0304c9060590f6e259f199ad153220ae",
+      "baseline_sha256": "0fd6cff72da353c4bea32d27404b4e5852b82df4fa17495824c75ac22fa0e1d1",
+      "rating": "clean",
+      "note": "All good."
+    }
+  ],
+  "result": "accepted"
+}

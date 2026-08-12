@@ -93,5 +93,11 @@ UTMOS is accepted here because its `-0.75` minimum Q8-minus-f32 score policy
 passes all 84 XN cases and rejects five of six known-bad PocketTTS.cpp INT8
 positive controls; ASR rejects the remaining short clip. NISQA-TTS was also
 probed but is not accepted because it scored several severely corrupted
-positive controls above their clean fp32 baselines. Human review remains the
-final distinct requirement before catalog promotion.
+positive controls above their clean fp32 baselines.
+
+The five-pair retained review passed on 2026-08-12. Three Q8 candidates were
+clean and two remained acceptable with only minor candidate-only defects; no
+significant artifact or intelligibility failure was heard. The exact case IDs,
+WAV hashes, ratings, and evidence hashes are recorded in
+[`retained-review-2026-08-12.json`](retained-review-2026-08-12.json). The audio
+corpus remains local and is not committed.

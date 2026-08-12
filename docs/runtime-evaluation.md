@@ -366,9 +366,12 @@ improvement of `-0.5002`. The release plan requires every Q8 case to stay above
 `-0.75`. The scorer wrapper verifies a clean SpeechMOS revision and exact model
 SHA-256, and UtterPipe consumes only precomputed scores and provenance; neither
 the runtime nor gate downloads or executes the metric. The combined signal,
-ASR, and perceptual gate passes all 84 cases. Human review of the retained
-spectral/perceptual outliers remains open, so automated passes alone still do
-not promote the profile into the quick-start catalog.
+ASR, and perceptual gate passes all 84 cases. On 2026-08-12 the project
+maintainer also accepted all five retained candidate/baseline pairs. Three Q8
+candidates were clean; two had tiny candidate-only defects but remained fully
+intelligible and acceptable. The hash-bound review record is checked in beside
+the XN experiment. The April Q8 profile therefore clears the acoustic release
+gate for catalog promotion.
 
 Listener acceptance on 2026-08-10 passed every saved XN sample, including the
 matched Q8/f32 outputs from all three operating systems and all four natural
