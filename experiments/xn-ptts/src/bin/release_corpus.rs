@@ -66,9 +66,18 @@ struct Args {
 struct CorpusPlan {
     schema: String,
     source: CorpusSource,
+    asr_policy: AsrPolicy,
     voices: Vec<String>,
     seeds: Vec<u64>,
     cases: Vec<CorpusCase>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AsrPolicy {
+    maximum_wer_delta: f64,
+    maximum_cer_delta: f64,
+    calibrated_positive_control: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -260,6 +269,14 @@ fn validate_args(args: &Args, plan: &CorpusPlan) -> Result<BTreeMap<String, Path
     }
     if plan.voices.is_empty() || plan.seeds.is_empty() || plan.cases.is_empty() {
         bail!("release corpus dimensions must not be empty");
+    }
+    if !plan.asr_policy.maximum_wer_delta.is_finite()
+        || plan.asr_policy.maximum_wer_delta < 0.0
+        || !plan.asr_policy.maximum_cer_delta.is_finite()
+        || plan.asr_policy.maximum_cer_delta < 0.0
+        || !valid_id(&plan.asr_policy.calibrated_positive_control)
+    {
+        bail!("release corpus ASR policy is invalid");
     }
     let expanded = plan
         .voices

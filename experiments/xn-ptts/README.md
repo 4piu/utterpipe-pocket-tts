@@ -64,5 +64,17 @@ contract succeeds. The directory contains 252 WAVs, their machine-readable run
 reports, a strict `utterpipe.acoustic-manifest/1`, and pinned corpus provenance.
 Run `utterpipe-acoustic-gate` on that manifest; the checked-in plan requires
 zero clipping, a maximum peak fraction of 0.95, deterministic Q8 replay, and
-the calibrated f32-relative overlay screen. ASR, a perceptual metric, and human
-review remain distinct required evidence before catalog promotion.
+the calibrated f32-relative overlay screen.
+
+For semantic evidence, build pinned `whisper.cpp` v1.9.2 and supply its full
+`small.en` model to `utterpipe-pocket-xn-asr-corpus`. The command reads the
+existing release directory, transcribes the first Q8 replay and f32 baseline in
+bounded batches, and writes a new manifest plus recognizer/model provenance;
+it never overwrites the original manifest or audio. The checked-in plan pins
+maximum f32-relative WER and CER deltas of 0.15 and 0.07. Those thresholds pass
+the 84-case XN corpus and fail all six clips from the known-bad PocketTTS.cpp
+INT8 positive control. Transcript text remains in the local input manifest and
+is reduced to metrics and a reference hash by `utterpipe-acoustic-gate`.
+
+A validated perceptual metric and human review remain distinct required
+evidence before catalog promotion.

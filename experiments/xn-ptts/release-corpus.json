@@ -5,6 +5,11 @@
     "revision": "7fc13c7a385b1331d0a4f2143f840ecde53ebf1e",
     "path": "scripts/evaluate_quantization.py"
   },
+  "asr_policy": {
+    "maximum_wer_delta": 0.15,
+    "maximum_cer_delta": 0.07,
+    "calibrated_positive_control": "pockettts-cpp-stock-int8-known-bad"
+  },
   "voices": [
     "voice-zero-bill-boerst",
     "voice-zero-caro-davy",

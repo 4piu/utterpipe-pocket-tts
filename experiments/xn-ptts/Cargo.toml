@@ -8,6 +8,10 @@ publish = false
 name = "utterpipe-pocket-xn-release-corpus"
 path = "src/bin/release_corpus.rs"
 
+[[bin]]
+name = "utterpipe-pocket-xn-asr-corpus"
+path = "src/bin/asr_corpus.rs"
+
 [dependencies]
 anyhow = "1.0"
 clap = { version = "4.5", features = ["derive"] }

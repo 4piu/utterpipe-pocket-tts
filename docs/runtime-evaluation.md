@@ -339,9 +339,22 @@ The original three-case smoke is superseded for signal coverage by the 84-case
 matrix. The reusable tool represents absent required evidence as `incomplete`,
 retains failures/outliers plus a stable listening sample, and never copies
 transcript text or local paths into its report. The final run retained eight
-spectral outliers and one stable pseudorandom case. ASR transcripts, a validated
-perceptual metric, and human review of that retained set remain open; the signal
-pass alone does not promote the profile into the quick-start catalog.
+spectral outliers and one stable pseudorandom case.
+
+Pinned `whisper.cpp` v1.9.2 with the full `small.en` model then transcribed the
+first Q8 replay and f32 baseline for all 84 cases. Q8 mean WER/CER were
+`0.1777`/`0.1173`, versus `0.2483`/`0.1793` for f32; Q8 was worse in only two
+cases. The maximum positive Q8-minus-f32 WER and CER deltas were `0.1429` and
+`0.0616`. Release limits of `0.15` and `0.07` therefore pass this corpus. As a
+calibration check, the same recognizer and limits failed all six known-bad
+PocketTTS.cpp stock-INT8 clips relative to its clean fp32 output, including the
+missing “runtime,” word substitutions, and truncated clauses. Absolute WER was
+not used as a hard per-case limit because Whisper rendered number words and the
+one-word “Yes.” inconsistently in both otherwise acceptable profiles.
+
+A validated perceptual metric and human review of the retained set remain open;
+the signal and ASR passes alone do not promote the profile into the quick-start
+catalog.
 
 Listener acceptance on 2026-08-10 passed every saved XN sample, including the
 matched Q8/f32 outputs from all three operating systems and all four natural
