@@ -1,0 +1,2 @@
+# Byte-pinned bootstrap assets must be identical on every checkout.
+assets/*.json text eol=lf
