@@ -480,10 +480,18 @@ fn private_temporary_directory(cache_dir: &Path) -> Result<PathBuf, PrepareError
 }
 
 fn create_private_dir(path: &Path) -> Result<(), PrepareError> {
-    let mut builder = fs::DirBuilder::new();
     #[cfg(unix)]
-    builder.mode(0o700);
-    builder.create(path).map_err(|_| PrepareError::Storage)
+    {
+        let mut builder = fs::DirBuilder::new();
+        builder.mode(0o700);
+        builder.create(path).map_err(|_| PrepareError::Storage)
+    }
+    #[cfg(not(unix))]
+    {
+        fs::DirBuilder::new()
+            .create(path)
+            .map_err(|_| PrepareError::Storage)
+    }
 }
 
 fn open_private(path: &Path) -> Result<File, PrepareError> {
