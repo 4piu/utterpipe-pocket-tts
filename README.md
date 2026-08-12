@@ -1,4 +1,4 @@
-# UtterPipe Pocket TTS provider
+# UtterPipe Pocket TTS — offline neural text-to-speech
 
 An offline neural-text-to-speech
 [UtterPipe](https://github.com/4piu/utterpipe/blob/main/docs/SPEC.md) provider

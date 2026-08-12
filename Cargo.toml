@@ -4,7 +4,7 @@ version = "0.2.0"
 edition = "2024"
 rust-version = "1.88"
 license = "Apache-2.0"
-description = "Offline Pocket TTS provider for UtterPipe"
+description = "Offline neural text-to-speech (TTS) provider for UtterPipe, powered by Pocket TTS and XN"
 repository = "https://github.com/4piu/utterpipe-pocket-tts"
 homepage = "https://github.com/4piu/utterpipe-pocket-tts"
 
