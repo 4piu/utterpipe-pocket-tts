@@ -74,12 +74,11 @@ Open the paged catalog and choose one or more numbered entries:
 utterpipe-pocket-tts voices install
 ```
 
-You can also list or select IDs, numbers, lists, and ranges directly:
+You can also list the catalog or select numbers and ranges directly:
 
 ```sh
 utterpipe-pocket-tts voices available
 utterpipe-pocket-tts voices install 2 5-7
-utterpipe-pocket-tts voices install voice-zero-caro-davy
 ```
 
 The command shows exact provenance, checksum, attribution, and license before

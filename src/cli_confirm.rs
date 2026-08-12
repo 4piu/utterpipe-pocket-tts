@@ -146,11 +146,7 @@ fn model_bundle_import_with(
                 license.id
             ));
         }
-        if !confirm(
-            input,
-            output,
-            &format!("Acknowledge model disclosure '{}'? [y/N] ", license.id),
-        )? {
+        if !confirm(input, output, &format!("Accept '{}'? [y/N] ", license.name))? {
             return Err("model bundle disclosure acceptance declined".to_owned());
         }
         accepted.push(license.id.clone());

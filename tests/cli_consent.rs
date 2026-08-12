@@ -97,7 +97,7 @@ fn piped_yes_does_not_authorize_curated_voice_download() {
     let arguments = [
         "voices",
         "install",
-        "voice-zero-caro-davy",
+        "2",
         storage[0].as_str(),
         storage[1].as_str(),
         storage[2].as_str(),
@@ -132,7 +132,7 @@ fn noninteractive_curated_install_requires_a_selection() {
     assert!(
         String::from_utf8(output.stderr)
             .unwrap()
-            .contains("requires one or more catalog IDs or numbers")
+            .contains("requires one or more catalog numbers")
     );
     assert!(!data.exists());
     assert!(!cache.exists());

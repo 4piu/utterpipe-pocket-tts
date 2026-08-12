@@ -48,7 +48,7 @@ pub(crate) fn choose_interactively<'a>(
 ) -> Result<Vec<&'a CuratedVoice>, String> {
     if !is_interactive() {
         return Err(
-            "voice installation requires one or more catalog IDs or numbers when non-interactive"
+            "voice installation requires one or more catalog numbers when non-interactive"
                 .to_owned(),
         );
     }
@@ -62,9 +62,7 @@ pub(crate) fn choose_interactively<'a>(
         return Err("voice installation cancelled".to_owned());
     }
     prompts
-        .write_all(
-            b"Select voices by number or ID (commas/spaces and ranges such as 2-4; q to cancel): ",
-        )
+        .write_all(b"Select voices by number (commas/spaces and ranges such as 2-4; q to cancel): ")
         .and_then(|()| prompts.flush())
         .map_err(|_| "could not write voice selection prompt".to_owned())?;
     let mut selection = String::new();
@@ -110,11 +108,9 @@ pub(crate) fn resolve_selections<'a>(
             select(number - 1, &mut selected, &mut order);
             continue;
         }
-        let index = voices
-            .iter()
-            .position(|voice| voice.id == token)
-            .ok_or_else(|| format!("unknown curated voice ID or number '{token}'"))?;
-        select(index, &mut selected, &mut order);
+        return Err(format!(
+            "catalog selection '{token}' is invalid; use a number or numeric range"
+        ));
     }
     if order.is_empty() {
         return Err("voice installation requires at least one selection".to_owned());
@@ -151,23 +147,22 @@ fn show_pages(
     if installed.len() != voices.len() {
         return Err("curated catalog state is inconsistent".to_owned());
     }
-    writeln!(output, "Available Pocket TTS voices:")
+    writeln!(output, "Pocket TTS voice catalog:")
         .map_err(|_| "could not write curated voice catalog".to_owned())?;
     for (page, chunk) in voices.chunks(PAGE_ITEMS).enumerate() {
         let start = page * PAGE_ITEMS;
         for (offset, voice) in chunk.iter().enumerate() {
             let index = start + offset;
             let status = if installed[index] {
-                "installed"
+                " · installed"
             } else {
-                "available"
+                ""
             };
             writeln!(
                 output,
-                "{:>2}. {} [{}] · {} · {} · {status}",
+                "{:>2}. {} · {} · {}{status}",
                 index + 1,
                 voice.name,
-                voice.id,
                 voice.collection,
                 voice.license_id,
             )
@@ -203,13 +198,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn numbers_ids_ranges_and_duplicates_resolve_in_user_order() {
+    fn numbers_ranges_and_duplicates_resolve_in_user_order() {
         let selected = resolve_selections(
-            &[
-                "2,4-5".to_owned(),
-                CURATED_VOICES[0].id.to_owned(),
-                "2".to_owned(),
-            ],
+            &["2,4-5".to_owned(), "1".to_owned(), "2".to_owned()],
             CURATED_VOICES,
         )
         .unwrap();
@@ -225,7 +216,9 @@ mod tests {
         );
         assert!(resolve_selections(&["0".to_owned()], CURATED_VOICES).is_err());
         assert!(resolve_selections(&["3-2".to_owned()], CURATED_VOICES).is_err());
-        assert!(resolve_selections(&["missing".to_owned()], CURATED_VOICES).is_err());
+        let error =
+            resolve_selections(&[CURATED_VOICES[0].id.to_owned()], CURATED_VOICES).unwrap_err();
+        assert!(error.contains("use a number or numeric range"));
     }
 
     #[test]
@@ -247,6 +240,8 @@ mod tests {
         assert!(output.contains(" 1."));
         assert!(output.contains(" 8."));
         assert!(!output.contains(" 9."));
+        assert!(!output.contains(CURATED_VOICES[0].id));
+        assert!(!output.contains("available"));
         assert!(String::from_utf8(prompts).unwrap().contains("-- more --"));
     }
 }

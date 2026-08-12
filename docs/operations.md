@@ -49,17 +49,19 @@ utterpipe-pocket-tts models import <bundle-directory> [--accept <id>]... [--yes]
 utterpipe-pocket-tts models remove <model-id> [--yes] ...
 utterpipe-pocket-tts voices list ...
 utterpipe-pocket-tts voices available ...
-utterpipe-pocket-tts voices install [selection]... [--accept <id>]... [--yes] ...
+utterpipe-pocket-tts voices install [number-or-range]... [--accept <id>]... [--yes] ...
 utterpipe-pocket-tts voices import <path-or-url> --id <id> [--consent-confirmed] ...
 utterpipe-pocket-tts voices remove <voice-id> [--yes] ...
 utterpipe-pocket-tts protocol --stdio
 ```
 
 The voice catalog is embedded and listing it is offline. Interactive terminals
-show eight numbered items per page and accept multiple numbers, IDs,
-comma-separated selections, and ranges. Redirected output is JSON Lines with a
-stable `number` field. Downloads honor the system proxy and normal proxy
-environment variables.
+show eight numbered items per page and accept multiple numbers,
+comma-separated selections, and ranges. A catalog row is downloadable unless
+it is marked `installed`; the command does not probe the network. Redirected
+output is JSON Lines with a stable `number` field and full machine-readable
+metadata. Downloads honor the system proxy and normal proxy environment
+variables.
 
 `models import` is the expert/offline route. A bundle must contain
 `manifest.json`, `model.gguf`, `config.json`, and exactly one supported
@@ -125,7 +127,7 @@ Voice operations require their displayed catalog license or explicit import
 consent, for example:
 
 ```text
-utterpipe-pocket-tts voices install voice-zero-caro-davy \
+utterpipe-pocket-tts voices install 2 \
   --accept cc0-1.0 --yes
 utterpipe-pocket-tts voices import /absolute/reference.wav --id my-voice \
   --consent-confirmed

@@ -5,7 +5,10 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{BufWriter, Read, Write},
     path::{Path, PathBuf},
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
     time::Duration,
 };
 
@@ -90,6 +93,37 @@ pub struct PreparedBundle {
     root: PathBuf,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SourceOrigin {
+    Local,
+    Cache,
+    Download,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PrepareProgress {
+    CheckingSource {
+        name: &'static str,
+        bytes: u64,
+    },
+    Downloading {
+        name: &'static str,
+        downloaded: u64,
+        total: u64,
+    },
+    SourceReady {
+        name: &'static str,
+        origin: SourceOrigin,
+    },
+    Converting {
+        completed: usize,
+        total: usize,
+    },
+    VerifyingBundle,
+}
+
+type ProgressCallback = Arc<dyn Fn(PrepareProgress) + Send + Sync>;
+
 impl PreparedBundle {
     #[must_use]
     pub fn path(&self) -> &Path {
@@ -150,6 +184,25 @@ pub async fn prepare_bundle(
     source_dir: Option<&Path>,
     cancellation: CancellationToken,
 ) -> Result<PreparedBundle, PrepareError> {
+    prepare_bundle_with_progress(cache_dir, source_dir, cancellation, |_| {}).await
+}
+
+/// Prepare the pinned bundle while reporting bounded, non-sensitive progress.
+pub async fn prepare_bundle_with_progress(
+    cache_dir: &Path,
+    source_dir: Option<&Path>,
+    cancellation: CancellationToken,
+    progress: impl Fn(PrepareProgress) + Send + Sync + 'static,
+) -> Result<PreparedBundle, PrepareError> {
+    prepare_bundle_inner(cache_dir, source_dir, cancellation, Arc::new(progress)).await
+}
+
+async fn prepare_bundle_inner(
+    cache_dir: &Path,
+    source_dir: Option<&Path>,
+    cancellation: CancellationToken,
+    progress: ProgressCallback,
+) -> Result<PreparedBundle, PrepareError> {
     let root = private_temporary_directory(cache_dir)?;
     let prepared = PreparedBundle { root };
     let sources = prepared.path().join("source");
@@ -160,17 +213,33 @@ pub async fn prepare_bundle(
             return Err(PrepareError::Storage);
         }
         for source in SOURCE_FILES {
+            progress(PrepareProgress::CheckingSource {
+                name: source.local_name,
+                bytes: source.bytes,
+            });
             copy_verified(
                 &source_dir.join(source.local_name),
                 &sources.join(source.local_name),
                 source,
                 &cancellation,
             )?;
+            progress(PrepareProgress::SourceReady {
+                name: source.local_name,
+                origin: SourceOrigin::Local,
+            });
         }
     } else {
         let token = resolve_hf_token().ok_or(PrepareError::AuthenticationRequired)?;
         for source in SOURCE_FILES {
-            download_source(cache_dir, &sources, source, &token, &cancellation).await?;
+            download_source(
+                cache_dir,
+                &sources,
+                source,
+                &token,
+                &cancellation,
+                &progress,
+            )
+            .await?;
         }
     }
 
@@ -189,9 +258,13 @@ pub async fn prepare_bundle(
     let input = sources.join("model.safetensors");
     let output = prepared.path().join("model.gguf");
     let task_cancellation = cancellation.clone();
-    tokio::task::spawn_blocking(move || quantize_q8(&input, &output, &task_cancellation))
-        .await
-        .map_err(|_| PrepareError::Conversion)??;
+    let task_progress = progress.clone();
+    tokio::task::spawn_blocking(move || {
+        quantize_q8(&input, &output, &task_cancellation, &task_progress)
+    })
+    .await
+    .map_err(|_| PrepareError::Conversion)??;
+    progress(PrepareProgress::VerifyingBundle);
     if fs::metadata(prepared.path().join("model.gguf"))
         .map_err(|_| PrepareError::Storage)?
         .len()
@@ -279,18 +352,28 @@ async fn download_source(
     source: &SourceFile,
     token: &str,
     cancellation: &CancellationToken,
+    progress: &ProgressCallback,
 ) -> Result<(), PrepareError> {
+    progress(PrepareProgress::CheckingSource {
+        name: source.local_name,
+        bytes: source.bytes,
+    });
     let cache = cache_dir
         .join("downloads")
         .join("sha256")
         .join(source.sha256);
     if cache.is_file() && hash_file(&cache, cancellation)? == source.sha256 {
-        return copy_verified(
+        copy_verified(
             &cache,
             &destination_dir.join(source.local_name),
             source,
             cancellation,
-        );
+        )?;
+        progress(PrepareProgress::SourceReady {
+            name: source.local_name,
+            origin: SourceOrigin::Cache,
+        });
+        return Ok(());
     }
     let parent = cache.parent().ok_or(PrepareError::Storage)?;
     fs::create_dir_all(parent).map_err(|_| PrepareError::Storage)?;
@@ -332,6 +415,11 @@ async fn download_source(
         let mut stream = response.bytes_stream();
         let mut total = 0_u64;
         let mut digest = Sha256::new();
+        progress(PrepareProgress::Downloading {
+            name: source.local_name,
+            downloaded: 0,
+            total: source.bytes,
+        });
         while let Some(next) = tokio::select! {
             () = cancellation.cancelled() => return Err(PrepareError::Cancelled),
             next = stream.next() => next,
@@ -347,6 +435,11 @@ async fn download_source(
             file.write_all(&chunk)
                 .await
                 .map_err(|_| PrepareError::Storage)?;
+            progress(PrepareProgress::Downloading {
+                name: source.local_name,
+                downloaded: total,
+                total: source.bytes,
+            });
         }
         file.sync_all().await.map_err(|_| PrepareError::Storage)?;
         if total != source.bytes || format!("{:x}", digest.finalize()) != source.sha256 {
@@ -376,22 +469,37 @@ async fn download_source(
         &destination_dir.join(source.local_name),
         source,
         cancellation,
-    )
+    )?;
+    progress(PrepareProgress::SourceReady {
+        name: source.local_name,
+        origin: SourceOrigin::Download,
+    });
+    Ok(())
 }
 
 fn quantize_q8(
     input: &Path,
     output: &Path,
     cancellation: &CancellationToken,
+    progress: &ProgressCallback,
 ) -> Result<(), PrepareError> {
     check_cancelled(cancellation)?;
     let tensors = safetensors::load_from_file(input, &CPU).map_err(|_| PrepareError::Conversion)?;
     let mut names: Vec<&String> = tensors.keys().collect();
     names.sort_unstable();
+    progress(PrepareProgress::Converting {
+        completed: 0,
+        total: names.len(),
+    });
     let mut converted = Vec::with_capacity(names.len());
-    for name in names {
+    let total = names.len();
+    for (index, name) in names.into_iter().enumerate() {
         check_cancelled(cancellation)?;
         if excluded_weight(name) {
+            progress(PrepareProgress::Converting {
+                completed: index + 1,
+                total,
+            });
             continue;
         }
         let tensor = &tensors[name];
@@ -403,6 +511,10 @@ fn quantize_q8(
             as_is_qtensor(tensor)?
         };
         converted.push((name.clone(), converted_tensor));
+        progress(PrepareProgress::Converting {
+            completed: index + 1,
+            total,
+        });
     }
     check_cancelled(cancellation)?;
     let refs: Vec<(&str, &QTensor)> = converted

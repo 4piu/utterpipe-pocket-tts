@@ -2,6 +2,7 @@ use std::{
     ffi::OsString,
     io::Write,
     path::{Path, PathBuf},
+    sync::{Arc, Mutex},
 };
 
 use clap::{Args, Parser, Subcommand};
@@ -15,7 +16,7 @@ use utterpipe_pocket_tts::{
         curated_download_url, curated_license_by_id, download_voice,
     },
     xn_bundle::{APRIL_MODEL_ID, verify_bundle as verify_xn_bundle},
-    xn_prepare::{catalog_manifest, prepare_bundle},
+    xn_prepare::{PrepareProgress, SourceOrigin, catalog_manifest, prepare_bundle_with_progress},
 };
 
 mod cli_catalog;
@@ -107,7 +108,7 @@ enum VoiceCommand {
     Available(Storage),
     /// Download and import one or more voices from the pinned catalog.
     Install {
-        /// Catalog IDs, list numbers, or numeric ranges. Omit for an interactive chooser.
+        /// Catalog numbers or numeric ranges. Omit for an interactive chooser.
         selections: Vec<String>,
         /// Override the installed voice ID.
         #[arg(long)]
@@ -208,22 +209,30 @@ async fn run() -> Result<(), String> {
             } => {
                 let manifest = catalog_manifest();
                 println!("Plan: prepare and install {APRIL_MODEL_ID}");
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&manifest.licenses)
-                        .map_err(|_| "could not encode model disclosures".to_owned())?
-                );
+                println!("Disclosures:");
+                for license in &manifest.licenses {
+                    println!("- {}", license.name);
+                    println!("  {}", license.url);
+                }
                 cli_confirm::model_bundle_import(&manifest.licenses, &mut accepted, yes)?;
                 let store = store(storage)?;
                 let source_dir = source_dir.map(absolute_path).transpose()?;
                 let cancellation = cancellation_on_ctrl_c();
-                let bundle = prepare_bundle(
+                let progress = Arc::new(Mutex::new(CliPrepareProgress::default()));
+                let progress_reporter = progress.clone();
+                let bundle = prepare_bundle_with_progress(
                     store.cache_dir(),
                     source_dir.as_deref(),
                     cancellation.clone(),
+                    move |event| {
+                        if let Ok(mut reporter) = progress_reporter.lock() {
+                            reporter.report(event);
+                        }
+                    },
                 )
                 .await
                 .map_err(|error| error.to_string())?;
+                eprintln!("Installing verified model bundle...");
                 let install_store = store.clone();
                 let install_source = bundle.path().to_owned();
                 let mut install = tokio::task::spawn_blocking(move || {
@@ -238,7 +247,12 @@ async fn run() -> Result<(), String> {
                         .map_err(|_| "model installation worker failed".to_owned())?
                         .map_err(public_store_error)?,
                 }
-                for voice in store.voice_catalog().map_err(public_store_error)? {
+                eprintln!("Model bundle installed.");
+                let voices = store.voice_catalog().map_err(public_store_error)?;
+                if !voices.is_empty() {
+                    eprintln!("Preparing {} installed voice(s)...", voices.len());
+                }
+                for voice in voices {
                     let Some(voice_id) = voice["id"].as_str() else {
                         continue;
                     };
@@ -608,4 +622,79 @@ async fn import_voice_path(
 
 fn default_xn_threads() -> u32 {
     if cfg!(target_arch = "aarch64") { 4 } else { 8 }
+}
+
+#[derive(Default)]
+struct CliPrepareProgress {
+    download_name: Option<&'static str>,
+    download_bucket: Option<u64>,
+    conversion_bucket: Option<usize>,
+}
+
+impl CliPrepareProgress {
+    fn report(&mut self, event: PrepareProgress) {
+        match event {
+            PrepareProgress::CheckingSource { name, bytes } => {
+                self.download_name = None;
+                self.download_bucket = None;
+                eprintln!("Checking {name} ({})...", human_bytes(bytes));
+            }
+            PrepareProgress::Downloading {
+                name,
+                downloaded,
+                total,
+            } => {
+                let percentage = downloaded.saturating_mul(100) / total.max(1);
+                let bucket = if percentage == 100 {
+                    100
+                } else {
+                    (percentage / 10) * 10
+                };
+                if self.download_name != Some(name) || self.download_bucket != Some(bucket) {
+                    eprintln!(
+                        "Downloading {name}: {percentage:>3}% ({}/{})",
+                        human_bytes(downloaded),
+                        human_bytes(total)
+                    );
+                    self.download_name = Some(name);
+                    self.download_bucket = Some(bucket);
+                }
+            }
+            PrepareProgress::SourceReady { name, origin } => {
+                let origin = match origin {
+                    SourceOrigin::Local => "local source",
+                    SourceOrigin::Cache => "verified cache",
+                    SourceOrigin::Download => "verified download",
+                };
+                eprintln!("Ready: {name} ({origin}).");
+            }
+            PrepareProgress::Converting { completed, total } => {
+                let percentage = completed.saturating_mul(100) / total.max(1);
+                let bucket = if percentage == 100 {
+                    100
+                } else {
+                    (percentage / 10) * 10
+                };
+                if self.conversion_bucket != Some(bucket) {
+                    eprintln!("Converting model to Q8: {percentage:>3}%");
+                    self.conversion_bucket = Some(bucket);
+                }
+            }
+            PrepareProgress::VerifyingBundle => {
+                eprintln!("Verifying prepared Q8 bundle...");
+            }
+        }
+    }
+}
+
+fn human_bytes(bytes: u64) -> String {
+    const KIB: u64 = 1_024;
+    const MIB: u64 = KIB * 1_024;
+    if bytes >= MIB {
+        format!("{:.1} MiB", bytes as f64 / MIB as f64)
+    } else if bytes >= KIB {
+        format!("{:.1} KiB", bytes as f64 / KIB as f64)
+    } else {
+        format!("{bytes} B")
+    }
 }
