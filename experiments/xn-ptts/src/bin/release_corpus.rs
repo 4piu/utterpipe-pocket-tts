@@ -67,6 +67,7 @@ struct CorpusPlan {
     schema: String,
     source: CorpusSource,
     asr_policy: AsrPolicy,
+    perceptual_policy: PerceptualPolicy,
     voices: Vec<String>,
     seeds: Vec<u64>,
     cases: Vec<CorpusCase>,
@@ -77,6 +78,18 @@ struct CorpusPlan {
 struct AsrPolicy {
     maximum_wer_delta: f64,
     maximum_cer_delta: f64,
+    calibrated_positive_control: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PerceptualPolicy {
+    id: String,
+    repository: String,
+    revision: String,
+    model_source: String,
+    model_sha256: String,
+    minimum_case_improvement: f64,
     calibrated_positive_control: String,
 }
 
@@ -278,6 +291,16 @@ fn validate_args(args: &Args, plan: &CorpusPlan) -> Result<BTreeMap<String, Path
     {
         bail!("release corpus ASR policy is invalid");
     }
+    if !valid_id(&plan.perceptual_policy.id)
+        || plan.perceptual_policy.repository.is_empty()
+        || !valid_id(&plan.perceptual_policy.revision)
+        || plan.perceptual_policy.model_source.is_empty()
+        || !valid_sha256(&plan.perceptual_policy.model_sha256)
+        || !plan.perceptual_policy.minimum_case_improvement.is_finite()
+        || !valid_id(&plan.perceptual_policy.calibrated_positive_control)
+    {
+        bail!("release corpus perceptual policy is invalid");
+    }
     let expanded = plan
         .voices
         .len()
@@ -446,6 +469,15 @@ fn valid_id(value: &str) -> bool {
         && value.bytes().enumerate().all(|(index, byte)| {
             byte.is_ascii_alphanumeric() || (index > 0 && b"._-".contains(&byte))
         })
+}
+
+fn valid_sha256(value: &str) -> bool {
+    value.strip_prefix("sha256:").is_some_and(|digest| {
+        digest.len() == 64
+            && digest
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    })
 }
 
 #[cfg(test)]

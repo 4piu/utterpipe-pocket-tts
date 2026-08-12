@@ -352,9 +352,23 @@ missing “runtime,” word substitutions, and truncated clauses. Absolute WER w
 not used as a hard per-case limit because Whisper rendered number words and the
 one-word “Yes.” inconsistently in both otherwise acceptable profiles.
 
-A validated perceptual metric and human review of the retained set remain open;
-the signal and ASR passes alone do not promote the profile into the quick-start
-catalog.
+Two offline TTS-naturalness metrics were then tested against the same positive
+control. NISQA-TTS v1 failed calibration: it scored the corrupted INT8 longer
+message `4.217` versus `4.159` for clean fp32, numbers `3.974` versus `3.668`,
+and short status `3.888` versus `3.705`. It is therefore not accepted as release
+evidence. UTMOS22 Strong separated five of the six corrupted clips, scoring
+them `2.291`--`2.630` versus clean baselines of `3.436`--`4.401`; the short
+status escaped UTMOS but was already rejected by ASR.
+
+Pinned UTMOS over the full XN matrix gave mean Q8/f32 scores of
+`4.1875`/`3.8822`, a mean Q8 improvement of `0.3053`, and a worst per-case
+improvement of `-0.5002`. The release plan requires every Q8 case to stay above
+`-0.75`. The scorer wrapper verifies a clean SpeechMOS revision and exact model
+SHA-256, and UtterPipe consumes only precomputed scores and provenance; neither
+the runtime nor gate downloads or executes the metric. The combined signal,
+ASR, and perceptual gate passes all 84 cases. Human review of the retained
+spectral/perceptual outliers remains open, so automated passes alone still do
+not promote the profile into the quick-start catalog.
 
 Listener acceptance on 2026-08-10 passed every saved XN sample, including the
 matched Q8/f32 outputs from all three operating systems and all four natural

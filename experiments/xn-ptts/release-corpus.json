@@ -10,6 +10,15 @@
     "maximum_cer_delta": 0.07,
     "calibrated_positive_control": "pockettts-cpp-stock-int8-known-bad"
   },
+  "perceptual_policy": {
+    "id": "utmos22-strong",
+    "repository": "tarepan/SpeechMOS",
+    "revision": "ed25eacbfa42b99156c36ebec67a733b5dbb9b79",
+    "model_source": "https://github.com/tarepan/SpeechMOS/releases/download/v1.0.0/utmos22_strong_step7459_v1.pt",
+    "model_sha256": "sha256:38aa51ab79e2a4e09a1449758a4b37e9cbb2e8235a49662a732d33a9ba1e9bff",
+    "minimum_case_improvement": -0.75,
+    "calibrated_positive_control": "pockettts-cpp-stock-int8-known-bad"
+  },
   "voices": [
     "voice-zero-bill-boerst",
     "voice-zero-caro-davy",

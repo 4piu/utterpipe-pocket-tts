@@ -76,5 +76,22 @@ the 84-case XN corpus and fail all six clips from the known-bad PocketTTS.cpp
 INT8 positive control. Transcript text remains in the local input manifest and
 is reduced to metrics and a reference hash by `utterpipe-acoustic-gate`.
 
-A validated perceptual metric and human review remain distinct required
-evidence before catalog promotion.
+Perceptual evidence and human review are separate release requirements from
+the ASR result.
+
+For perceptual evidence, use Python 3.10 or newer with PyTorch, torchaudio, and
+librosa. Check out the plan-pinned `tarepan/SpeechMOS` revision, obtain its
+plan-pinned `utmos22_strong` checkpoint, and run
+`utterpipe-pocket-xn-perceptual-corpus` with the ASR-annotated manifest,
+`score_utmos22.py`, the clean checkout, and checkpoint. The wrapper verifies the
+Git revision, rejects any tracked or untracked checkout changes, checks the
+model SHA-256, and requires exactly one finite candidate/baseline score for
+every plan case. It writes another new manifest and provenance file without
+overwriting its input.
+
+UTMOS is accepted here because its `-0.75` minimum Q8-minus-f32 score policy
+passes all 84 XN cases and rejects five of six known-bad PocketTTS.cpp INT8
+positive controls; ASR rejects the remaining short clip. NISQA-TTS was also
+probed but is not accepted because it scored several severely corrupted
+positive controls above their clean fp32 baselines. Human review remains the
+final distinct requirement before catalog promotion.

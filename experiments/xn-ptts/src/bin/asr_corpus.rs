@@ -65,6 +65,7 @@ struct CorpusPlan {
     schema: String,
     source: CorpusSource,
     asr_policy: AsrPolicy,
+    perceptual_policy: PerceptualPolicy,
     voices: Vec<String>,
     seeds: Vec<u64>,
     cases: Vec<CorpusCase>,
@@ -75,6 +76,18 @@ struct CorpusPlan {
 struct AsrPolicy {
     maximum_wer_delta: f64,
     maximum_cer_delta: f64,
+    calibrated_positive_control: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PerceptualPolicy {
+    id: String,
+    repository: String,
+    revision: String,
+    model_source: String,
+    model_sha256: String,
+    minimum_case_improvement: f64,
     calibrated_positive_control: String,
 }
 
@@ -264,6 +277,19 @@ fn validate_plan(plan: &CorpusPlan) -> Result<()> {
         || plan.asr_policy.calibrated_positive_control.chars().count() > 80
     {
         bail!("release corpus ASR policy is invalid");
+    }
+    if plan.perceptual_policy.id.is_empty()
+        || plan.perceptual_policy.repository.is_empty()
+        || plan.perceptual_policy.revision.is_empty()
+        || plan.perceptual_policy.model_source.is_empty()
+        || plan.perceptual_policy.model_sha256.len() != 71
+        || !plan.perceptual_policy.minimum_case_improvement.is_finite()
+        || plan
+            .perceptual_policy
+            .calibrated_positive_control
+            .is_empty()
+    {
+        bail!("release corpus perceptual policy is invalid");
     }
     for case in &plan.cases {
         if case.text.is_empty()
