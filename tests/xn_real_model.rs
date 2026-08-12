@@ -11,12 +11,14 @@ use std::{
 
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use tokio_util::sync::CancellationToken;
 use utterpipe_pocket_tts::{
     audio,
     engine::{EngineError, GenerationOptions},
     store::{Store, StoreError},
     xn_bundle::{VerifiedXnBundle, verify_bundle},
     xn_engine::XnPocketEngine,
+    xn_prepare::{RUNTIME_MODEL_SHA256, prepare_bundle},
 };
 
 const CONTROL: u8 = 0x01;
@@ -108,11 +110,29 @@ fn engine(bundle: &VerifiedXnBundle, voice_state: &std::path::Path) -> Arc<XnPoc
 
 fn options(max_audio_bytes: usize) -> GenerationOptions {
     GenerationOptions {
-        speed: 1.0,
         seed: 42,
         timeout: Duration::from_secs(30),
         max_audio_bytes,
     }
+}
+
+#[tokio::test]
+#[ignore = "requires the exact pinned April source model and tokenizer"]
+async fn xn_prepare_reproduces_the_catalog_q8_bundle() {
+    let source = fixture("UTTERPIPE_POCKET_XN_SOURCE");
+    let storage = tempfile::tempdir().unwrap();
+    let prepared = prepare_bundle(
+        &storage.path().join("cache"),
+        Some(&source),
+        CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    let bundle = verify_bundle(prepared.path(), || false).unwrap();
+    assert_eq!(
+        bundle.manifest.files["model.gguf"].sha256,
+        RUNTIME_MODEL_SHA256
+    );
 }
 
 #[tokio::test]

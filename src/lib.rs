@@ -2,12 +2,12 @@ pub mod audio;
 pub mod config;
 pub mod direct_storage;
 pub mod engine;
-pub mod model;
 pub mod protocol;
 pub mod store;
 pub mod voice;
 pub mod xn_bundle;
 pub mod xn_engine;
+pub mod xn_prepare;
 
 pub const PROVIDER_SLUG: &str = "pocket-tts";
 pub const PROVIDER_NAME: &str = "Pocket TTS provider";

@@ -8,7 +8,6 @@ use clap::{Args, Parser, Subcommand};
 use utterpipe_pocket_tts::{
     PROVIDER_NAME, PROVIDER_SLUG, PROVIDER_VENDOR, PROVIDER_VERSION,
     direct_storage::resolve_direct_storage,
-    model::{MODEL_ID, licenses, model_descriptor},
     protocol,
     store::{Store, VoiceProvenance},
     voice::{
@@ -16,6 +15,7 @@ use utterpipe_pocket_tts::{
         curated_download_url, curated_license_by_id, download_voice,
     },
     xn_bundle::{APRIL_MODEL_ID, verify_bundle as verify_xn_bundle},
+    xn_prepare::{catalog_manifest, prepare_bundle},
 };
 
 mod cli_catalog;
@@ -67,10 +67,10 @@ enum ModelCommand {
     Prepare {
         #[command(flatten)]
         storage: Storage,
-        /// Install from this already-downloaded pinned archive instead of networking.
+        /// Prepare from a directory containing the exact pinned model.safetensors and tokenizer.model.
         #[arg(long)]
-        archive: Option<PathBuf>,
-        /// Required disclosure ID; repeat for all three IDs.
+        source_dir: Option<PathBuf>,
+        /// Required disclosure ID; repeat for every displayed ID.
         #[arg(long = "accept")]
         accepted: Vec<String>,
         /// Confirm the displayed plan and terms.
@@ -79,7 +79,7 @@ enum ModelCommand {
     },
     /// Import a complete self-describing XN bundle from a local directory.
     Import {
-        /// Directory containing manifest.json, model.gguf, config.json, and tokenizer.json.
+        /// Directory containing manifest.json, model.gguf, config.json, and one supported tokenizer.
         source: PathBuf,
         #[command(flatten)]
         storage: Storage,
@@ -171,14 +171,13 @@ async fn run() -> Result<(), String> {
             println!("version: {PROVIDER_VERSION}");
             println!("protocol: utterpipe.tts v1");
             println!("delivery: complete PCM16 WAV, incremental PCM16");
-            println!("engines: sherpa-onnx 1.13.4 (static), XN 0.1.21 (native Rust)");
+            println!("engine: XN 0.1.21 (native Rust, Q8)");
             Ok(())
         }
         Command::Doctor(storage) => {
             let store = store(storage)?;
             store.validate_local().map_err(public_store_error)?;
-            println!("sherpa model: {}", store.model_status());
-            println!("XN model: {}", store.xn_model_status());
+            println!("model: {}", store.xn_model_status());
             println!(
                 "imported voices: {}",
                 store.voice_catalog().map_err(public_store_error)?.len()
@@ -190,42 +189,64 @@ async fn run() -> Result<(), String> {
                 let store = store(storage)?;
                 println!(
                     "{}",
-                    serde_json::to_string_pretty(&serde_json::json!([
-                        model_descriptor(store.model_status()),
-                        {
-                            "id": APRIL_MODEL_ID,
-                            "name": "Pocket TTS English April 2026 Q8 (XN)",
-                            "status": store.xn_model_status(),
-                            "languages": ["en"],
-                            "source": "local validated bundle import"
-                        }
-                    ]))
+                    serde_json::to_string_pretty(&serde_json::json!([{
+                        "id": APRIL_MODEL_ID,
+                        "name": "Pocket TTS English April 2026 Q8",
+                        "status": store.xn_model_status(),
+                        "languages": ["en"],
+                        "source": "pinned official model with local Q8 conversion"
+                    }]))
                     .map_err(|_| "could not encode model descriptor".to_owned())?
                 );
                 Ok(())
             }
             ModelCommand::Prepare {
                 storage,
-                archive,
+                source_dir,
                 mut accepted,
                 yes,
             } => {
-                println!("Plan: install {MODEL_ID}");
+                let manifest = catalog_manifest();
+                println!("Plan: prepare and install {APRIL_MODEL_ID}");
                 println!(
                     "{}",
-                    serde_json::to_string_pretty(&licenses())
+                    serde_json::to_string_pretty(&manifest.licenses)
                         .map_err(|_| "could not encode model disclosures".to_owned())?
                 );
-                cli_confirm::prepare(&mut accepted, yes)?;
+                cli_confirm::model_bundle_import(&manifest.licenses, &mut accepted, yes)?;
                 let store = store(storage)?;
-                if let Some(archive) = archive {
-                    store
-                        .install_model_from_archive(&archive, &accepted)
-                        .map_err(public_store_error)?;
-                } else {
-                    protocol::prepare_model_network(store, accepted).await?;
+                let source_dir = source_dir.map(absolute_path).transpose()?;
+                let cancellation = cancellation_on_ctrl_c();
+                let bundle = prepare_bundle(
+                    store.cache_dir(),
+                    source_dir.as_deref(),
+                    cancellation.clone(),
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+                let install_store = store.clone();
+                let install_source = bundle.path().to_owned();
+                let mut install = tokio::task::spawn_blocking(move || {
+                    install_store.install_xn_bundle_from_directory(&install_source, &accepted)
+                });
+                tokio::select! {
+                    result = &mut install => result
+                        .map_err(|_| "model installation worker failed".to_owned())?
+                        .map_err(public_store_error)?,
+                    () = cancellation.cancelled() => install
+                        .await
+                        .map_err(|_| "model installation worker failed".to_owned())?
+                        .map_err(public_store_error)?,
                 }
-                println!("installed: model:{MODEL_ID}");
+                for voice in store.voice_catalog().map_err(public_store_error)? {
+                    let Some(voice_id) = voice["id"].as_str() else {
+                        continue;
+                    };
+                    store
+                        .prepare_xn_voice(APRIL_MODEL_ID, voice_id, default_xn_threads())
+                        .map_err(public_store_error)?;
+                }
+                println!("installed: model:{APRIL_MODEL_ID}");
                 Ok(())
             }
             ModelCommand::Import {
@@ -270,7 +291,7 @@ async fn run() -> Result<(), String> {
                 Ok(())
             }
             ModelCommand::Remove { id, storage, yes } => {
-                if id != MODEL_ID && id != APRIL_MODEL_ID {
+                if id != APRIL_MODEL_ID {
                     return Err("unknown model ID".to_owned());
                 }
                 let artifact = format!("model:{id}");

@@ -1,7 +1,4 @@
-//! Experimental bounded adapter for the pinned native XN Pocket TTS runtime.
-//!
-//! This module intentionally remains beside the released sherpa adapter until
-//! it passes provider-level protocol and cross-platform gates.
+//! Bounded adapter for the pinned native XN Pocket TTS runtime.
 
 use std::{
     fs::File,
@@ -215,6 +212,24 @@ impl Tokenizer for HfTokenizer {
     }
 }
 
+struct SpTokenizer(sentencepiece::SentencePieceProcessor);
+
+impl Tokenizer for SpTokenizer {
+    fn encode(&self, text: &str) -> xn::Result<Vec<u32>> {
+        Ok(self
+            .0
+            .encode(text)
+            .map_err(xn::Error::wrap)?
+            .into_iter()
+            .map(|piece| piece.id)
+            .collect())
+    }
+
+    fn decode(&self, tokens: &[u32]) -> xn::Result<String> {
+        self.0.decode_piece_ids(tokens).map_err(xn::Error::wrap)
+    }
+}
+
 struct PreparedChunk {
     tokens: Vec<u32>,
     max_frames: usize,
@@ -292,13 +307,23 @@ impl XnPocketEngine {
         if config.mimi.sample_rate != SAMPLE_RATE as usize {
             return Err(EngineError::Unavailable);
         }
-        let tokenizer = tokenizers::Tokenizer::from_file(tokenizer_path)
-            .map_err(|_| EngineError::Unavailable)?;
+        let tokenizer: Box<dyn Tokenizer + Send + Sync> =
+            if tokenizer_path.extension().and_then(|value| value.to_str()) == Some("model") {
+                Box::new(SpTokenizer(
+                    sentencepiece::SentencePieceProcessor::open(tokenizer_path)
+                        .map_err(|_| EngineError::Unavailable)?,
+                ))
+            } else {
+                Box::new(HfTokenizer(
+                    tokenizers::Tokenizer::from_file(tokenizer_path)
+                        .map_err(|_| EngineError::Unavailable)?,
+                ))
+            };
         let reader = BufReader::new(File::open(model_path).map_err(|_| EngineError::Unavailable)?);
         let weights = VB::load_gguf_with_key_map(reader, xn::CPU, remap_key)
             .map_err(|_| EngineError::Unavailable)?;
         let root = weights.root();
-        let model = TTSModel::<Q80F32>::load(&root, Box::new(HfTokenizer(tokenizer)), &config)
+        let model = TTSModel::<Q80F32>::load(&root, tokenizer, &config)
             .map_err(|_| EngineError::Unavailable)?;
         root.check_all_used_with_ignore(ignored_weight)
             .map_err(|_| EngineError::Unavailable)?;
@@ -326,8 +351,6 @@ impl XnPocketEngine {
 
     /// Generate bounded consecutive PCM16 frames with cooperative cancellation.
     ///
-    /// XN has no native speed control, so only the neutral value is accepted.
-    ///
     /// # Errors
     ///
     /// Returns a stable engine error for invalid options, cancellation, timeout,
@@ -339,9 +362,6 @@ impl XnPocketEngine {
         cancellation: Arc<AtomicBool>,
         sender: tokio::sync::mpsc::Sender<Vec<u8>>,
     ) -> Result<GenerationSummary, EngineError> {
-        if !options.speed.is_finite() || (options.speed - 1.0).abs() > f64::EPSILON {
-            return Err(EngineError::InvalidOptions);
-        }
         let chunks = self.prepare_chunks(text)?;
         let started = Instant::now();
         let digest = Arc::new(Mutex::new(Sha256::new()));

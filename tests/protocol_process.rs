@@ -6,10 +6,9 @@ use std::{
 
 use serde_json::{Value, json};
 use tempfile::TempDir;
-use utterpipe_pocket_tts::{
-    model::{LICENSE_IDS, MODEL_ID},
-    store::Store,
-};
+use utterpipe_pocket_tts::{store::Store, xn_bundle::APRIL_MODEL_ID};
+
+const LICENSE_IDS: &[&str] = &["cc-by-4.0", "pocket-tts-acceptable-use"];
 
 const CONTROL: u8 = 0x01;
 
@@ -83,7 +82,7 @@ fn initialize_params(temp: &TempDir) -> Value {
     json!({
         "data_dir": temp.path().join("data").to_string_lossy(),
         "cache_dir": temp.path().join("cache").to_string_lossy(),
-        "provider_options": {"model": MODEL_ID, "voice": "test-voice"}
+        "provider_options": {"model": APRIL_MODEL_ID, "voice": "test-voice"}
     })
 }
 
@@ -236,7 +235,7 @@ fn management_catalog_import_plan_and_remove_are_wire_compatible() {
     let models = provider.response();
     assert_eq!(
         models["result"]["items"][0]["provider_options_patch"],
-        json!({"model":MODEL_ID})
+        json!({"model":APRIL_MODEL_ID})
     );
 
     provider.request(
@@ -245,7 +244,7 @@ fn management_catalog_import_plan_and_remove_are_wire_compatible() {
         json!({"refresh": false, "allow_network": false}),
     );
     let plan = provider.response();
-    assert_eq!(plan["result"]["licenses"].as_array().unwrap().len(), 3);
+    assert_eq!(plan["result"]["licenses"].as_array().unwrap().len(), 2);
     let plan_id = plan["result"]["plan_id"].as_str().unwrap();
     provider.request(
         "apply-without-terms",
@@ -389,8 +388,8 @@ fn contended_prepare_can_be_retried_and_detects_a_stale_plan() {
     );
     assert_eq!(provider.response()["error"]["code"], "resource_busy");
 
-    let model_root = temp.path().join("data/models").join(MODEL_ID);
-    std::fs::create_dir_all(&model_root).unwrap();
+    let model_root = temp.path().join("data/models").join(APRIL_MODEL_ID);
+    std::fs::create_dir_all(model_root.join("versions/corrupt-version")).unwrap();
     std::fs::write(model_root.join("active"), "corrupt-version\n").unwrap();
     drop(guard);
     provider.request(
@@ -402,6 +401,14 @@ fn contended_prepare_can_be_retried_and_detects_a_stale_plan() {
         }),
     );
     assert_eq!(provider.response()["error"]["code"], "plan_stale");
+    provider.request(
+        "repair-plan",
+        "prepare.plan",
+        json!({"refresh": false, "allow_network": true}),
+    );
+    let repair = provider.response();
+    assert_eq!(repair["result"]["licenses"].as_array().unwrap().len(), 2);
+    assert_eq!(repair["result"]["actions"][0]["kind"], "download");
     provider.shutdown();
 }
 

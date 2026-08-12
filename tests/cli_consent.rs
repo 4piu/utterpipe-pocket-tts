@@ -51,7 +51,7 @@ fn piped_yes_does_not_authorize_model_preparation() {
     assert!(
         String::from_utf8(output.stderr)
             .unwrap()
-            .contains("preparation requires --yes")
+            .contains("model bundle import requires --yes")
     );
     assert!(!data.exists());
     assert!(!cache.exists());

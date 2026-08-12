@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     fs::{self, File, OpenOptions},
     io::{Read, Write},
     path::{Component, Path, PathBuf},
@@ -8,17 +8,14 @@ use std::{
 };
 
 use atomicwrites::{AllowOverwrite, AtomicFile};
-use bzip2::read::BzDecoder;
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use tar::Archive;
 use thiserror::Error;
 
 use crate::{
-    audio::{self, ReferenceAudio},
-    model::{ARCHIVE_SHA256, MODEL_ID, REQUIRED_FILES, VERSION_TOKEN},
+    audio,
     xn_bundle::{
         APRIL_MODEL_ID, VerifiedXnBundle, XnBundleError, verify_bundle as verify_xn_bundle,
     },
@@ -26,21 +23,12 @@ use crate::{
 };
 
 const SCHEMA_VERSION: u32 = 1;
-const MAX_ARCHIVE_ENTRIES: usize = 128;
-const MAX_EXTRACTED_BYTES: u64 = 300 * 1_024 * 1_024;
 static OPERATION_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone)]
 pub struct Store {
     data_dir: PathBuf,
     cache_dir: PathBuf,
-}
-
-pub struct RuntimeAssets {
-    pub model_dir: PathBuf,
-    pub reference: ReferenceAudio,
-    _model_lease: File,
-    _voice_lease: File,
 }
 
 pub struct XnModelAssets {
@@ -96,8 +84,6 @@ pub enum StoreError {
     ConsentRequired,
     #[error("voice ID already contains different reference content")]
     VoiceConflict,
-    #[error("model archive is unsafe or incompatible")]
-    UnsafeArchive,
     #[error("reference audio is invalid")]
     InvalidAudio,
     #[error("all required model disclosures must be accepted")]
@@ -109,15 +95,6 @@ pub enum StoreError {
 #[derive(Serialize, Deserialize)]
 struct SchemaFile {
     schema_version: u32,
-}
-
-#[derive(Serialize, Deserialize)]
-struct ModelManifest {
-    schema_version: u32,
-    model_id: String,
-    archive_sha256: String,
-    accepted_licenses: Vec<String>,
-    files: HashMap<String, String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -177,18 +154,6 @@ impl Store {
     }
 
     #[must_use]
-    pub fn model_status(&self) -> &'static str {
-        match self
-            .active_model_dir()
-            .and_then(|path| verify_model_dir(&path))
-        {
-            Ok(()) => "installed",
-            Err(StoreError::ModelMissing) => "available",
-            Err(_) => "incomplete",
-        }
-    }
-
-    #[must_use]
     pub fn xn_model_status(&self) -> &'static str {
         match self
             .active_xn_model_dir()
@@ -220,9 +185,7 @@ impl Store {
     ///
     /// Returns missing or invalid-selection errors for absent/unknown artifacts.
     pub fn artifact_token(&self, artifact: &str) -> Result<String, StoreError> {
-        if artifact == format!("model:{MODEL_ID}") {
-            read_active(&self.data_dir.join("models").join(MODEL_ID))
-        } else if artifact == format!("model:{APRIL_MODEL_ID}") {
+        if artifact == format!("model:{APRIL_MODEL_ID}") {
             read_active(&self.data_dir.join("models").join(APRIL_MODEL_ID))
         } else if let Some(voice) = artifact.strip_prefix("voice:") {
             if !valid_voice_id(voice) {
@@ -302,58 +265,6 @@ impl Store {
         Ok(voices)
     }
 
-    /// Verify and acquire shared model and voice leases for a runtime.
-    ///
-    /// # Errors
-    ///
-    /// Returns a stable missing, integrity, schema, I/O, or concurrent-removal error.
-    pub fn acquire_runtime(
-        &self,
-        model_id: &str,
-        voice_id: &str,
-    ) -> Result<RuntimeAssets, StoreError> {
-        self.validate_schema_required()?;
-        if model_id != MODEL_ID {
-            return Err(StoreError::ModelMissing);
-        }
-        let model_dir = self.active_model_dir()?;
-        verify_model_dir(&model_dir)?;
-        let model_lease = open_shared_lease(&model_dir.join("lease.lock"))?;
-
-        if !valid_voice_id(voice_id) {
-            return Err(StoreError::VoiceMissing);
-        }
-        let voice_root = self.data_dir.join("voices").join(voice_id);
-        let voice_version = read_active(&voice_root).map_err(|error| match error {
-            StoreError::ModelMissing => StoreError::VoiceMissing,
-            other => other,
-        })?;
-        let voice_dir = voice_root.join("versions").join(voice_version);
-        let metadata = read_voice_metadata(&voice_dir)?;
-        if metadata.voice_id != voice_id
-            || metadata.model_id != MODEL_ID
-            || !metadata.consent_confirmed
-        {
-            return Err(StoreError::Integrity);
-        }
-        let voice_lease = open_shared_lease(&voice_dir.join("lease.lock"))?;
-        let reference = audio::read_reference(&voice_dir.join("reference.wav"), 30.0)
-            .map_err(|_| StoreError::Integrity)?;
-        if hash_file(&voice_dir.join("reference.wav"))? != metadata.normalized_wav_sha256
-            || reference.samples_sha256 != metadata.samples_sha256
-            || reference.sample_rate != metadata.sample_rate_hz
-            || reference.samples.len() != metadata.sample_count
-        {
-            return Err(StoreError::Integrity);
-        }
-        Ok(RuntimeAssets {
-            model_dir,
-            reference,
-            _model_lease: model_lease,
-            _voice_lease: voice_lease,
-        })
-    }
-
     /// Verify and acquire a shared lease on the installed XN model bundle.
     ///
     /// # Errors
@@ -420,28 +331,6 @@ impl Store {
         })
     }
 
-    /// Install and activate the pinned model from an already-downloaded archive.
-    ///
-    /// # Errors
-    ///
-    /// Returns a lock, I/O, hash, archive-policy, or schema error without activating
-    /// partial contents.
-    pub fn install_model_from_archive(
-        &self,
-        archive_path: &Path,
-        accepted_licenses: &[String],
-    ) -> Result<(), StoreError> {
-        let accepted: HashSet<_> = accepted_licenses.iter().map(String::as_str).collect();
-        if !crate::model::LICENSE_IDS
-            .iter()
-            .all(|license| accepted.contains(license))
-        {
-            return Err(StoreError::LicenseRequired);
-        }
-        let mutation = self.begin_mutation()?;
-        self.install_model_from_archive_locked(archive_path, accepted_licenses, &mutation, || false)
-    }
-
     /// Install and activate a validated extracted XN model bundle.
     ///
     /// # Errors
@@ -488,12 +377,30 @@ impl Store {
         let versions = root.join("versions");
         fs::create_dir_all(&versions).map_err(|_| StoreError::Io)?;
         let destination = versions.join(&source_bundle.revision);
-        if destination.exists() {
-            let installed = verify_xn_installation(&destination)?;
-            if installed.revision != source_bundle.revision {
-                return Err(StoreError::Integrity);
+        let needs_install = if destination.exists() {
+            match verify_xn_installation(&destination) {
+                Ok(installed) if installed.revision == source_bundle.revision => false,
+                _ => {
+                    let lease_path = destination.join("lease.lock");
+                    if lease_path.exists() {
+                        let lease = OpenOptions::new()
+                            .read(true)
+                            .write(true)
+                            .open(&lease_path)
+                            .map_err(|_| StoreError::Integrity)?;
+                        lease
+                            .try_lock_exclusive()
+                            .map_err(|_| StoreError::ResourceBusy)?;
+                    }
+                    fs::remove_dir_all(&destination).map_err(|_| StoreError::Io)?;
+                    sync_dir(&versions)?;
+                    true
+                }
             }
         } else {
+            true
+        };
+        if needs_install {
             let staging = versions.join(format!(".staging-{}", operation_id()));
             fs::create_dir(&staging).map_err(|_| StoreError::Io)?;
             let result = (|| {
@@ -501,7 +408,7 @@ impl Store {
                     "manifest.json",
                     "config.json",
                     "model.gguf",
-                    "tokenizer.json",
+                    source_bundle.tokenizer_name(),
                 ] {
                     check_cancelled(&cancelled)?;
                     copy_file_cancelled(&source.join(name), &staging.join(name), &cancelled)?;
@@ -647,81 +554,6 @@ impl Store {
         publish_active(&root, &state_version)
     }
 
-    /// Install an archive while a caller-owned mutation lease is held.
-    ///
-    /// # Errors
-    ///
-    /// Returns an I/O, integrity, archive-policy, or schema error.
-    pub fn install_model_from_archive_locked<F>(
-        &self,
-        archive_path: &Path,
-        accepted_licenses: &[String],
-        _mutation: &MutationGuard,
-        cancelled: F,
-    ) -> Result<(), StoreError>
-    where
-        F: Fn() -> bool,
-    {
-        let accepted: HashSet<_> = accepted_licenses.iter().map(String::as_str).collect();
-        if !crate::model::LICENSE_IDS
-            .iter()
-            .all(|license| accepted.contains(license))
-        {
-            return Err(StoreError::LicenseRequired);
-        }
-        check_cancelled(&cancelled)?;
-        self.initialize_schema()?;
-        if hash_file_cancelled(archive_path, &cancelled)? != ARCHIVE_SHA256 {
-            return Err(StoreError::Integrity);
-        }
-        check_cancelled(&cancelled)?;
-        if let Ok(active) = self.active_model_dir()
-            && verify_model_dir(&active).is_ok()
-        {
-            return Ok(());
-        }
-
-        self.publish_archive_cache(archive_path, &cancelled)?;
-        check_cancelled(&cancelled)?;
-        let versions = self.data_dir.join("models").join(MODEL_ID).join("versions");
-        fs::create_dir_all(&versions).map_err(|_| StoreError::Io)?;
-        let destination = versions.join(VERSION_TOKEN);
-        if destination.exists() {
-            verify_model_dir(&destination)?;
-        } else {
-            let staging = versions.join(format!(".staging-{}", operation_id()));
-            fs::create_dir(&staging).map_err(|_| StoreError::Io)?;
-            let result = extract_selected(archive_path, &staging, &cancelled).and_then(|()| {
-                check_cancelled(&cancelled)?;
-                let files = REQUIRED_FILES
-                    .iter()
-                    .map(|(name, hash)| ((*name).to_owned(), (*hash).to_owned()))
-                    .collect();
-                let manifest = ModelManifest {
-                    schema_version: SCHEMA_VERSION,
-                    model_id: MODEL_ID.to_owned(),
-                    archive_sha256: ARCHIVE_SHA256.to_owned(),
-                    accepted_licenses: accepted_licenses.to_vec(),
-                    files,
-                };
-                write_json_synced(&staging.join("manifest.json"), &manifest)?;
-                File::create(staging.join("lease.lock"))
-                    .and_then(|file| file.sync_all())
-                    .map_err(|_| StoreError::Io)?;
-                sync_dir(&staging)?;
-                check_cancelled(&cancelled)?;
-                fs::rename(&staging, &destination).map_err(|_| StoreError::Io)?;
-                sync_dir(&versions)
-            });
-            if result.is_err() {
-                let _ = fs::remove_dir_all(&staging);
-            }
-            result?;
-        }
-        check_cancelled(&cancelled)?;
-        publish_active(&self.data_dir.join("models").join(MODEL_ID), VERSION_TOKEN)
-    }
-
     /// Import and atomically activate one normalized reference voice.
     ///
     /// # Errors
@@ -796,7 +628,7 @@ impl Store {
                 let metadata = VoiceMetadata {
                     schema_version: SCHEMA_VERSION,
                     voice_id: voice_id.to_owned(),
-                    model_id: MODEL_ID.to_owned(),
+                    model_id: APRIL_MODEL_ID.to_owned(),
                     source_sha256: reference.source_sha256.clone(),
                     samples_sha256: reference.samples_sha256.clone(),
                     sample_rate_hz: reference.sample_rate,
@@ -928,11 +760,7 @@ impl Store {
         let mut derived_roots = Vec::new();
         for artifact in artifacts {
             check_cancelled(&cancelled)?;
-            let (root, version) = if artifact == &format!("model:{MODEL_ID}") {
-                let root = self.data_dir.join("models").join(MODEL_ID);
-                let version = read_active(&root)?;
-                (root, version)
-            } else if artifact == &format!("model:{APRIL_MODEL_ID}") {
+            let (root, version) = if artifact == &format!("model:{APRIL_MODEL_ID}") {
                 let root = self.data_dir.join("models").join(APRIL_MODEL_ID);
                 let version = read_active(&root)?;
                 (root, version)
@@ -988,15 +816,6 @@ impl Store {
             let _ = fs::remove_dir_all(root);
         }
         Ok(artifacts.to_vec())
-    }
-
-    fn active_model_dir(&self) -> Result<PathBuf, StoreError> {
-        let root = self.data_dir.join("models").join(MODEL_ID);
-        let version = read_active(&root)?;
-        if version != VERSION_TOKEN {
-            return Err(StoreError::Integrity);
-        }
-        Ok(root.join("versions").join(version))
     }
 
     fn active_xn_model_dir(&self) -> Result<PathBuf, StoreError> {
@@ -1055,141 +874,6 @@ impl Store {
             .map_err(|_| StoreError::ResourceBusy)?;
         Ok(MutationGuard { _lock: lock })
     }
-
-    fn publish_archive_cache<F>(&self, source: &Path, cancelled: &F) -> Result<(), StoreError>
-    where
-        F: Fn() -> bool,
-    {
-        let destination = self
-            .cache_dir
-            .join("downloads")
-            .join("sha256")
-            .join(ARCHIVE_SHA256);
-        if destination.exists() {
-            return if hash_file_cancelled(&destination, cancelled)? == ARCHIVE_SHA256 {
-                Ok(())
-            } else {
-                Err(StoreError::Integrity)
-            };
-        }
-        let parent = destination.parent().ok_or(StoreError::Io)?;
-        fs::create_dir_all(parent).map_err(|_| StoreError::Io)?;
-        let temporary = parent.join(format!(".tmp-{}", operation_id()));
-        let result = copy_file_cancelled(source, &temporary, cancelled);
-        if result.is_err() {
-            let _ = fs::remove_file(&temporary);
-        }
-        result?;
-        check_cancelled(cancelled)?;
-        match fs::rename(&temporary, &destination) {
-            Ok(()) => sync_dir(parent),
-            Err(_)
-                if destination.exists()
-                    && hash_file_cancelled(&destination, cancelled)? == ARCHIVE_SHA256 =>
-            {
-                let _ = fs::remove_file(temporary);
-                Ok(())
-            }
-            Err(_) => Err(StoreError::Io),
-        }
-    }
-}
-
-fn extract_selected<F>(
-    archive_path: &Path,
-    destination: &Path,
-    cancelled: &F,
-) -> Result<(), StoreError>
-where
-    F: Fn() -> bool,
-{
-    let file = File::open(archive_path).map_err(|_| StoreError::Io)?;
-    let mut archive = Archive::new(BzDecoder::new(file));
-    let required: HashMap<_, _> = REQUIRED_FILES.iter().copied().collect();
-    let mut found = HashSet::new();
-    let mut total = 0_u64;
-    let mut count = 0_usize;
-    for entry in archive.entries().map_err(|_| StoreError::UnsafeArchive)? {
-        check_cancelled(cancelled)?;
-        let mut entry = entry.map_err(|_| StoreError::UnsafeArchive)?;
-        count += 1;
-        total = total.saturating_add(entry.size());
-        if count > MAX_ARCHIVE_ENTRIES || total > MAX_EXTRACTED_BYTES {
-            return Err(StoreError::UnsafeArchive);
-        }
-        let kind = entry.header().entry_type();
-        if !(kind.is_file() || kind.is_dir()) {
-            return Err(StoreError::UnsafeArchive);
-        }
-        let path = entry.path().map_err(|_| StoreError::UnsafeArchive)?;
-        if path.is_absolute()
-            || path
-                .components()
-                .any(|component| matches!(component, Component::ParentDir | Component::Prefix(_)))
-        {
-            return Err(StoreError::UnsafeArchive);
-        }
-        if !kind.is_file() {
-            continue;
-        }
-        let components: Vec<_> = path.components().collect();
-        if components.len() != 2 {
-            continue;
-        }
-        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
-            return Err(StoreError::UnsafeArchive);
-        };
-        let Some(expected) = required.get(name) else {
-            continue;
-        };
-        if !found.insert(name.to_owned()) {
-            return Err(StoreError::UnsafeArchive);
-        }
-        let output = destination.join(name);
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&output)
-            .map_err(|_| StoreError::Io)?;
-        copy_reader_cancelled(&mut entry, &mut file, cancelled)?;
-        file.sync_all().map_err(|_| StoreError::Io)?;
-        if hash_file_cancelled(&output, cancelled)? != *expected {
-            return Err(StoreError::Integrity);
-        }
-    }
-    if found.len() != required.len() {
-        return Err(StoreError::Integrity);
-    }
-    Ok(())
-}
-
-fn verify_model_dir(path: &Path) -> Result<(), StoreError> {
-    if !path.is_dir() {
-        return Err(StoreError::ModelMissing);
-    }
-    let bytes = fs::read(path.join("manifest.json")).map_err(|_| StoreError::Integrity)?;
-    let manifest: ModelManifest =
-        serde_json::from_slice(&bytes).map_err(|_| StoreError::Integrity)?;
-    if manifest.schema_version != SCHEMA_VERSION
-        || manifest.model_id != MODEL_ID
-        || manifest.archive_sha256 != ARCHIVE_SHA256
-        || !crate::model::LICENSE_IDS.iter().all(|license| {
-            manifest
-                .accepted_licenses
-                .iter()
-                .any(|accepted| accepted == license)
-        })
-    {
-        return Err(StoreError::Integrity);
-    }
-    for (name, expected) in REQUIRED_FILES {
-        if manifest.files.get(*name).map(String::as_str) != Some(*expected)
-            || hash_file(&path.join(name))? != *expected
-        {
-            return Err(StoreError::Integrity);
-        }
-    }
-    Ok(())
 }
 
 fn verify_xn_installation(path: &Path) -> Result<VerifiedXnBundle, StoreError> {
@@ -1304,7 +988,7 @@ fn valid_voice_provenance(metadata: &VoiceMetadata) -> bool {
 fn verify_voice_dir(path: &Path, expected_voice_id: &str) -> Result<(), StoreError> {
     let metadata = read_voice_metadata(path)?;
     if metadata.voice_id != expected_voice_id
-        || metadata.model_id != MODEL_ID
+        || metadata.model_id != APRIL_MODEL_ID
         || !metadata.consent_confirmed
         || hash_file(&path.join("reference.wav"))? != metadata.normalized_wav_sha256
     {
@@ -1563,17 +1247,6 @@ mod tests {
         let riff_size = u32::try_from(output.len() - 8).unwrap();
         output[4..8].copy_from_slice(&riff_size.to_le_bytes());
         fs::write(path, output).unwrap();
-    }
-
-    #[test]
-    fn license_refusal_is_non_mutating() {
-        let (temp, store) = test_store();
-        let error = store
-            .install_model_from_archive(Path::new("/does/not/exist"), &[])
-            .unwrap_err();
-        assert!(matches!(error, StoreError::LicenseRequired));
-        assert!(!temp.path().join("data").exists());
-        assert!(!temp.path().join("cache").exists());
     }
 
     #[test]

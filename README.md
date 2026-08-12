@@ -1,40 +1,32 @@
 # UtterPipe Pocket TTS provider
 
-A local neural-text-to-speech
+An offline neural-text-to-speech
 [UtterPipe](https://github.com/4piu/utterpipe/blob/main/docs/SPEC.md) provider
-for [Pocket TTS](https://github.com/kyutai-labs/pocket-tts). It runs as one
-standalone executable, stays offline after setup, and provides complete WAV or
-incremental 24 kHz mono PCM16 audio. Agent Speak keeps one warm engine process
+for [Kyutai Pocket TTS](https://github.com/kyutai-labs/pocket-tts). It uses the
+native [XN Pocket TTS runtime](https://github.com/4piu/xn-ptts), supports
+complete WAV and incremental 24 kHz mono PCM16 audio, and keeps one warm engine
 for responsive repeated speech.
 
 ## Before you install
 
-The provider executable **does not bundle the model or a voice**:
+The executable bundles **neither a model nor a voice**.
 
-- `models prepare` downloads the pinned converted model after showing its
-  CC-BY-4.0 terms, acceptable-use conditions, and non-commercial notice.
-- Voices are not downloaded automatically. The provider offers a small,
-  checksum-pinned selection from Kyutai's official
-  [`kyutai/tts-voices`](https://huggingface.co/kyutai/tts-voices) repository,
-  or you can import another local or HTTP(S) WAV that you have permission to
-  use. The catalog includes CC0, CC BY 4.0, and non-commercial CC BY-NC 4.0
-  collections; every selection retains its own license and attribution.
-- The provider stores the model and imported reference locally. It does not
-  upload or publish imported voices.
+- The quick start downloads the gated official April 2026 English Pocket TTS
+  model from [`kyutai/pocket-tts`](https://huggingface.co/kyutai/pocket-tts),
+  verifies the pinned source, and converts it locally to the tested XN Q8
+  profile. Accept the model-page access agreement and authenticate with Hugging
+  Face first.
+- The source download is about 219 MB and the installed runtime model is about
+  148 MB. The verified source cache can be removed after installation.
+- A reference WAV supplies the speaker, accent, and style. It does not add a
+  language to the English model. The provider offers a checksum-pinned voice
+  catalog from [`kyutai/tts-voices`](https://huggingface.co/kyutai/tts-voices)
+  or can import an authorized local/HTTP(S) WAV.
+- Model terms, acceptable-use conditions, and each voice's license remain in
+  force. The provider records consent and provenance but grants no rights to a
+  recording, speaker identity, or generated voice.
 
-The current model is English-only. The model determines which language can be
-spoken; a reference WAV supplies the speaker, accent, and style but does not add
-a language to the model. For best results, match the reference recording to the
-model language. Current upstream Pocket TTS offers separate language-specific
-models, while this provider supports only the pinned English sherpa-onnx
-conversion. Plan on an approximately 98 MB download, 198 MB of installed model
-files, one interactive setup, and a suitable reference recording before
-expecting synthesis to work.
-
-## Quick start with Agent Speak
-
-These steps use the provider's platform-standard storage roots, which are also
-used by Agent Speak.
+## Quick start
 
 ### 1. Install the provider
 
@@ -50,38 +42,39 @@ Windows PowerShell:
 irm https://raw.githubusercontent.com/4piu/utterpipe-pocket-tts/main/install.ps1 | iex
 ```
 
-Open a new terminal if the installer added the executable directory to `PATH`.
-Confirm that `utterpipe-pocket-tts --version` works before continuing.
-
 If you use the Agent Speak VS Code extension, run **Agent Speak: Open Provider
-Folder** and copy the installed executable there. The extension keeps providers
-isolated from the `PATH` inherited by the VS Code desktop process; model and
-voice setup below still uses the same platform-standard storage. Use
-`command -v utterpipe-pocket-tts` on macOS/Linux or
-`(Get-Command utterpipe-pocket-tts).Source` in PowerShell to locate it.
+Folder** and copy the installed executable there. The extension deliberately
+keeps its providers isolated from ordinary `PATH` discovery.
 
-### 2. Download and prepare the model
+### 2. Authenticate and prepare the model
 
-Run this in a terminal without redirecting or piping its input or output:
+On the [official model page](https://huggingface.co/kyutai/pocket-tts), sign in
+and accept the access agreement. Then authenticate the local Hugging Face CLI:
+
+```sh
+hf auth login
+```
+
+Alternatively set `HF_TOKEN` or `HF_TOKEN_PATH`. The provider never prints the
+credential. Run the interactive preparation command:
 
 ```sh
 utterpipe-pocket-tts models prepare
 ```
 
-The command displays the model disclosures and asks before accepting each one
-and downloading the pinned model. Every prompt defaults to no.
+It displays the pinned source and both required disclosures, defaults every
+prompt to no, downloads with the system proxy, verifies exact hashes, performs
+the deterministic CPU Q8 conversion, and atomically installs the result.
 
 ### 3. Install a voice
 
-The provider does not bundle voices. Open its interactive, paged catalog and
-choose one or more numbered selections:
+Open the paged catalog and choose one or more numbered entries:
 
 ```sh
 utterpipe-pocket-tts voices install
 ```
 
-`voices available` shows the same numbered pages without installing. You can
-also select IDs, numbers, comma lists, or ranges directly:
+You can also list or select IDs, numbers, lists, and ranges directly:
 
 ```sh
 utterpipe-pocket-tts voices available
@@ -89,108 +82,78 @@ utterpipe-pocket-tts voices install 2 5-7
 utterpipe-pocket-tts voices install voice-zero-caro-davy
 ```
 
-The install command shows each exact source revision, attribution, checksum,
-and applicable license, then asks for acknowledgement before downloading. To
-use another authorized recording instead, reuse the same import command for a
-path or URL:
+The command shows exact provenance, checksum, attribution, and license before
+download. To use another recording, reuse the importer for a path or URL:
 
 ```sh
 utterpipe-pocket-tts voices import ./reference.wav --id my-voice
 utterpipe-pocket-tts voices import https://example.test/reference.wav --id my-voice
 ```
 
-Import asks you to confirm the necessary rights and consent. The WAV must be a
-regular mono PCM16 RIFF/WAVE file at 16–48 kHz and 1–30 seconds long. Inputs
-larger than 5 MiB produce a warning but are streamed and remain cancellable.
-For best results, use a clean recording with one speaker and little background
-noise.
+The input must be mono PCM16 RIFF/WAVE at 16–48 kHz and 1–30 seconds. A clean
+single-speaker English recording usually works best. The imported WAV is
+normalized locally and may then be discarded if you do not need your original.
 
-### 4. Configure Agent Speak
+## Agent Speak configuration
 
-Download the maintained
-[complete Pocket TTS profile](https://github.com/4piu/agent-speak/blob/master/examples/pocket-provider.toml):
+Download the maintained complete profile:
 
 ```sh
 curl -fsSLo agent-speak.toml https://raw.githubusercontent.com/4piu/agent-speak/master/examples/pocket-provider.toml
 ```
 
-On PowerShell, use:
-
-```powershell
-irm https://raw.githubusercontent.com/4piu/agent-speak/master/examples/pocket-provider.toml -OutFile agent-speak.toml
-```
-
-The template selects the pinned model and `voice = "my-voice"`. Change the
-`voice` value to your chosen ID—for example `voice-zero-caro-davy`—then validate
-the complete profile and installed assets:
+Set its `voice` to your installed ID, then validate and serve it:
 
 ```sh
 agent-speak validate --config /absolute/path/to/agent-speak.toml
-```
-
-Configure your MCP client to launch:
-
-```text
 agent-speak serve --config /absolute/path/to/agent-speak.toml
 ```
 
-Reload the MCP server, call `get_audio_capabilities`, then ask the agent:
+Reload the MCP server, call `get_audio_capabilities`, and ask the agent to say:
 
-> Say “Pocket TTS is working.”
+> Pocket TTS is working.
 
-`validate` checks the provider, model, and voice but does not synthesize audio;
-the MCP `speak_text` call is the final listening test. See
-[Agent Speak's MCP setup](https://github.com/4piu/agent-speak#register-with-an-mcp-host)
-for client-specific configuration.
+Validation checks the provider, model, and voice; `speak_text` is the final
+audible test.
 
 ## Provider options
 
-Agent Speak's complete profile uses these fixed engine settings:
-
 ```toml
 [tts.provider_options]
-model = "pocket-tts-int8-2026-01-26"
+model = "pocket-tts-english-2026-04-q8"
 voice = "my-voice"
-num_threads = 2
-max_reference_audio_seconds = 10.0
-voice_embedding_cache_capacity = 16
+num_threads = 4
 ```
 
-The inexpensive per-request options are `speed` (default `1.0`) and `seed`
-(default `42`). A host may send configured defaults on every synthesis and let
-an agent override authorized values for one request; neither option rebuilds
-the engine.
+`num_threads` accepts `1..64`; omission defaults to 4 on arm64 and 8 elsewhere.
+The only per-utterance option is `seed` (default `42`). The active XN backend
+does not expose a speed control.
 
-## Status and compatibility
+## Model profile and compatibility
 
-Version 0.1 pins `pocket-tts-int8-2026-01-26` and statically links sherpa-onnx
-1.13.4. macOS arm64, Linux x86_64, and Windows x86_64 are verified locally.
-Tagged release archives contain the provider and documentation, not the model
-or a voice. Kyutai publishes the upstream gated
-[`model.safetensors` weights](https://huggingface.co/kyutai/pocket-tts); they
-are provenance/source weights for compatible Pocket runtimes, not drop-in files
-for this provider's current sherpa-onnx model installer.
+The catalog deliberately contains one known-good bootstrap profile:
 
-Development builds also contain the native XN candidate for the April 2026
-English model. It is intentionally absent from the downloadable quick-start
-catalog until its bundle and provider path pass Windows and Linux release
-gates. Developers with a complete validated local bundle can use `models
-import <directory>`; ordinary voice imports then prepare the compact XN state
-automatically. See the runtime evaluation for the current evidence and exact
-limitations.
+- official source revision
+  `19f95fe2df36e79fbd9f10008595cc4c977a0fcc`;
+- forked XN runtime revision
+  `4dbd8d6832cf4e093d08a1bd4666a08783345e7b`;
+- local deterministic Q8 conversion and a provider-pinned acoustic profile;
+- locally verified on macOS arm64, Linux x86_64, and Windows x86_64.
+
+Other model formats are not implied compatible. `models import <directory>` is
+the expert/offline route for a complete self-describing XN bundle containing
+`manifest.json`, `model.gguf`, `config.json`, and exactly one supported
+`tokenizer.model` or `tokenizer.json`.
 
 ## More documentation
 
-- [Setup, direct CLI, automation, storage, and development](docs/operations.md)
-- [Provider and wire specification](docs/SPEC.md)
+- [Setup, automation, storage, and development](docs/operations.md)
+- [Provider specification](docs/SPEC.md)
+- [Runtime evaluation and retained evidence](docs/runtime-evaluation.md)
 - [Third-party terms and notices](THIRD_PARTY_NOTICES.md)
 - [Release-integrity status](docs/release-integrity.md)
 
-An imported reference remains your asset. You are responsible for permission,
-privacy, publicity, and acceptable-use requirements for both the recording and
-generated voice. The provider grants no rights to either.
-
 ## License
 
-The provider adapter is Apache-2.0. Model weights and user voice assets are
-separate and retain their own terms.
+The provider adapter is Apache-2.0. Model weights and voice assets are separate
+and retain their own terms.

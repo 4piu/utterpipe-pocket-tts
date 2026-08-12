@@ -29,7 +29,8 @@ pub const APRIL_SOURCE_REVISION: &str = "19f95fe2df36e79fbd9f10008595cc4c977a0fc
 const MANIFEST_NAME: &str = "manifest.json";
 const CONFIG_NAME: &str = "config.json";
 const MODEL_NAME: &str = "model.gguf";
-const TOKENIZER_NAME: &str = "tokenizer.json";
+const TOKENIZER_JSON_NAME: &str = "tokenizer.json";
+const TOKENIZER_MODEL_NAME: &str = "tokenizer.model";
 const MAX_MANIFEST_BYTES: u64 = 64 * 1_024;
 const MAX_CONFIG_BYTES: u64 = 1_048_576;
 const MAX_MODEL_BYTES: u64 = 2 * 1_024 * 1_024 * 1_024;
@@ -119,7 +120,16 @@ impl VerifiedXnBundle {
 
     #[must_use]
     pub fn tokenizer_path(&self) -> PathBuf {
-        self.root.join(TOKENIZER_NAME)
+        self.root.join(self.tokenizer_name())
+    }
+
+    #[must_use]
+    pub fn tokenizer_name(&self) -> &'static str {
+        if self.manifest.files.contains_key(TOKENIZER_MODEL_NAME) {
+            TOKENIZER_MODEL_NAME
+        } else {
+            TOKENIZER_JSON_NAME
+        }
     }
 
     #[must_use]
@@ -168,10 +178,15 @@ pub fn verify_bundle(
     validate_manifest(&manifest)?;
 
     let config = verified_small_file(root, &manifest, CONFIG_NAME, MAX_CONFIG_BYTES, &cancelled)?;
+    let tokenizer_name = if manifest.files.contains_key(TOKENIZER_MODEL_NAME) {
+        TOKENIZER_MODEL_NAME
+    } else {
+        TOKENIZER_JSON_NAME
+    };
     let tokenizer = verified_small_file(
         root,
         &manifest,
-        TOKENIZER_NAME,
+        tokenizer_name,
         MAX_TOKENIZER_BYTES,
         &cancelled,
     )?;
@@ -198,7 +213,12 @@ pub fn verify_bundle(
     {
         return Err(XnBundleError::InvalidManifest);
     }
-    tokenizers::Tokenizer::from_bytes(tokenizer).map_err(|_| XnBundleError::InvalidManifest)?;
+    if tokenizer_name == TOKENIZER_MODEL_NAME {
+        sentencepiece::SentencePieceProcessor::from_serialized_proto(&tokenizer)
+            .map_err(|_| XnBundleError::InvalidManifest)?;
+    } else {
+        tokenizers::Tokenizer::from_bytes(tokenizer).map_err(|_| XnBundleError::InvalidManifest)?;
+    }
 
     let canonical =
         serde_json_canonicalizer::to_vec(&manifest).map_err(|_| XnBundleError::InvalidManifest)?;
@@ -256,15 +276,23 @@ fn validate_manifest(manifest: &XnBundleManifest) -> Result<(), XnBundleError> {
     {
         return Err(XnBundleError::InvalidManifest);
     }
-    let required: HashSet<_> = [CONFIG_NAME, MODEL_NAME, TOKENIZER_NAME]
+    let tokenizer_count = usize::from(manifest.files.contains_key(TOKENIZER_JSON_NAME))
+        + usize::from(manifest.files.contains_key(TOKENIZER_MODEL_NAME));
+    let tokenizer_name = if manifest.files.contains_key(TOKENIZER_MODEL_NAME) {
+        TOKENIZER_MODEL_NAME
+    } else {
+        TOKENIZER_JSON_NAME
+    };
+    let required: HashSet<_> = [CONFIG_NAME, MODEL_NAME, tokenizer_name]
         .into_iter()
         .collect();
-    if manifest
-        .files
-        .keys()
-        .map(String::as_str)
-        .collect::<HashSet<_>>()
-        != required
+    if tokenizer_count != 1
+        || manifest
+            .files
+            .keys()
+            .map(String::as_str)
+            .collect::<HashSet<_>>()
+            != required
         || manifest
             .files
             .values()
@@ -445,7 +473,7 @@ mod tests {
         let tokenizer = br#"{"version":"1.0","truncation":null,"padding":null,"added_tokens":[],"normalizer":null,"pre_tokenizer":null,"post_processor":null,"decoder":null,"model":{"type":"WordLevel","vocab":{"test":0},"unk_token":"test"}}"#;
         fs::write(temp.path().join(CONFIG_NAME), &config).unwrap();
         fs::write(temp.path().join(MODEL_NAME), model).unwrap();
-        fs::write(temp.path().join(TOKENIZER_NAME), tokenizer).unwrap();
+        fs::write(temp.path().join(TOKENIZER_JSON_NAME), tokenizer).unwrap();
         let files = BTreeMap::from([
             (
                 CONFIG_NAME.to_owned(),
@@ -462,7 +490,7 @@ mod tests {
                 },
             ),
             (
-                TOKENIZER_NAME.to_owned(),
+                TOKENIZER_JSON_NAME.to_owned(),
                 BundleFile {
                     bytes: tokenizer.len() as u64,
                     sha256: digest(tokenizer),

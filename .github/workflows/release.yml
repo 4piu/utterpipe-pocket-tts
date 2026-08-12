@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  native:
+  provider:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
@@ -24,23 +24,15 @@ jobs:
           - name: Linux x64
             runner: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            archive: sherpa-onnx-v1.13.4-linux-x64-static-lib.tar.bz2
-            sha256: 98b0e31996426f6e78244dbce1955548f2c64e8f01c4be75b85af7cdaa2e8d5c
           - name: macOS arm64
             runner: macos-15
             target: aarch64-apple-darwin
-            archive: sherpa-onnx-v1.13.4-osx-arm64-static-lib.tar.bz2
-            sha256: 57801db2bbb786a5d343f515a38ff210b401842338bdc804fa075312d1cd2404
           - name: macOS x64
             runner: macos-15-intel
             target: x86_64-apple-darwin
-            archive: sherpa-onnx-v1.13.4-osx-x64-static-lib.tar.bz2
-            sha256: 2bda2c10b31a1cfc45d9f9e14bd4983743ec3779d309e42d99a6c8fa1689043f
           - name: Windows x64
             runner: windows-latest
             target: x86_64-pc-windows-msvc
-            archive: sherpa-onnx-v1.13.4-win-x64-static-MT-Release-lib.tar.bz2
-            sha256: d81bd1d25112540862d2387072e76b2b6843ef962918d6b5c7db5a19c6276b4c
     env:
       TARGET: ${{ matrix.target }}
     steps:
@@ -64,76 +56,12 @@ jobs:
           }
           echo "ARCHIVE_NAME=utterpipe-pocket-tts-$expected_tag-$TARGET" >> "$GITHUB_ENV"
 
-      - name: Fetch and verify native engine and model archives
-        shell: bash
-        run: |
-          if [[ "${{ runner.os }}" == "Windows" ]]; then
-            fixture_dir="$(cygpath -u '${{ runner.temp }}')/pocket-fixtures"
-          else
-            fixture_dir="${{ runner.temp }}/pocket-fixtures"
-          fi
-          native_dir="$fixture_dir/native"
-          mkdir -p "$native_dir"
-
-          native="$native_dir/${{ matrix.archive }}"
-          curl --fail --location --retry 3 --output "$native" \
-            "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.4/${{ matrix.archive }}"
-          if command -v sha256sum >/dev/null 2>&1; then
-            actual="$(sha256sum "$native" | awk '{print $1}')"
-          else
-            actual="$(shasum -a 256 "$native" | awk '{print $1}')"
-          fi
-          test "$actual" = "${{ matrix.sha256 }}" || {
-            echo "sherpa-onnx archive checksum mismatch" >&2
-            exit 1
-          }
-          tar -xjf "$native" -C "$native_dir"
-          native_lib_dir="$(find "$native_dir" -mindepth 2 -maxdepth 2 -type d -name lib -print -quit)"
-          test -n "$native_lib_dir" || {
-            echo "sherpa-onnx archive has no library directory" >&2
-            exit 1
-          }
-          mkdir -p "$native_dir/excluded"
-          gpl_archive="$(find "$native_lib_dir" -maxdepth 1 -type f \( -name 'libespeak-ng.a' -o -name 'espeak-ng.lib' \) -print -quit)"
-          test -n "$gpl_archive" || {
-            echo "expected bundled eSpeak archive was not found" >&2
-            exit 1
-          }
-          mv "$gpl_archive" "$native_dir/excluded/"
-          unicode_archive="$(find "$native_lib_dir" -maxdepth 1 -type f \( -name 'libucd.a' -o -name 'ucd.lib' \) -print -quit)"
-          test -n "$unicode_archive" || {
-            echo "expected eSpeak Unicode-data archive was not found" >&2
-            exit 1
-          }
-          mv "$unicode_archive" "$native_dir/excluded/"
-
-          model="$fixture_dir/sherpa-onnx-pocket-tts-int8-2026-01-26.tar.bz2"
-          curl --fail --location --retry 3 --output "$model" \
-            https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/sherpa-onnx-pocket-tts-int8-2026-01-26.tar.bz2
-          if command -v sha256sum >/dev/null 2>&1; then
-            actual="$(sha256sum "$model" | awk '{print $1}')"
-          else
-            actual="$(shasum -a 256 "$model" | awk '{print $1}')"
-          fi
-          test "$actual" = "2f3b88823cbbb9bf0b2477ec8ae7b3fec417b3a87b6bb5f256dba66f2ad967cb" || {
-            echo "Pocket model archive checksum mismatch" >&2
-            exit 1
-          }
-
-          if [[ "${{ runner.os }}" == "Windows" ]]; then
-            native_lib_dir="$(cygpath -w "$native_lib_dir")"
-            model="$(cygpath -w "$model")"
-          fi
-          echo "SHERPA_ONNX_LIB_DIR=$native_lib_dir" >> "$GITHUB_ENV"
-          echo "UTTERPIPE_POCKET_MODEL_ARCHIVE=$model" >> "$GITHUB_ENV"
-
-      - name: Test native inference and build release
+      - name: Test and build release
         run: |
           cargo test --locked --release --all-targets --target ${{ matrix.target }}
-          cargo test --locked --release --target ${{ matrix.target }} --test real_model -- --ignored --nocapture
           cargo build --locked --release --target ${{ matrix.target }}
 
-      - name: Package self-contained provider
+      - name: Package provider
         shell: bash
         run: |
           if [[ "${{ runner.os }}" == "Windows" ]]; then
@@ -149,11 +77,10 @@ jobs:
           fi
           package_root="$temp_dir/$ARCHIVE_NAME"
           dist="$workspace/dist"
-          mkdir -p "$package_root/native" "$dist"
+          mkdir -p "$package_root" "$dist"
           cp "target/$TARGET/release/utterpipe-pocket-tts$suffix" "$package_root/"
           cp README.md THIRD_PARTY_NOTICES.md THIRD_PARTY_LICENSES.html \
             LICENSE install.sh install.ps1 "$package_root/"
-          cp native/ONNXRUNTIME_THIRD_PARTY_NOTICES.txt "$package_root/native/"
           cp -R docs "$package_root/"
 
           if [[ "$extension" == "zip" ]]; then
@@ -179,10 +106,9 @@ jobs:
 
           provider="$extract_root/$ARCHIVE_NAME/utterpipe-pocket-tts$suffix"
           "$provider" info
-          data="$temp_dir/package-data"
-          cache="$temp_dir/package-cache"
           "$provider" doctor \
-            --data-dir "$data" --cache-dir "$cache"
+            --data-dir "$temp_dir/package-data" \
+            --cache-dir "$temp_dir/package-cache"
 
       - uses: actions/upload-artifact@v7
         with:
@@ -232,7 +158,7 @@ jobs:
 
   publish:
     name: Publish release
-    needs: [native, source]
+    needs: [provider, source]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v8

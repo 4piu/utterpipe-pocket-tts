@@ -1,74 +1,60 @@
 # Third-party notices
 
-The provider is licensed under Apache-2.0. Its exact Rust dependency inventory,
-copyright notices, and license texts for all release targets are in
-[`THIRD_PARTY_LICENSES.html`](THIRD_PARTY_LICENSES.html). This includes the
-ISC/Apache/MIT/BSD notices incorporated by AWS-LC and the bzip2 notice. The
-provider reads each platform's native certificate store, so the current
-runtime graph does not distribute the separately licensed `webpki-roots` data.
-`Cargo.lock` and each release SBOM record the corresponding versions and
-checksums.
+The provider is Apache-2.0. Its exact release dependency inventory, copyright
+notices, and license texts are in
+[`THIRD_PARTY_LICENSES.html`](THIRD_PARTY_LICENSES.html); `Cargo.lock` and each
+release SBOM record exact versions and sources.
 
 ## Native Pocket runtime
 
-The executable statically incorporates these pinned native components:
+The executable incorporates these pinned components but no model weights or
+reference recordings:
 
-- sherpa-onnx 1.13.4, Copyright (c) 2022-2026 Next-gen Kaldi contributors,
-  Apache-2.0,
-  <https://github.com/k2-fsa/sherpa-onnx/tree/v1.13.4>;
-- ONNX Runtime 1.27.0, MIT, including its complete upstream
-  [`native/ONNXRUNTIME_THIRD_PARTY_NOTICES.txt`](native/ONNXRUNTIME_THIRD_PARTY_NOTICES.txt);
-- kaldi-decoder 0.3.0, kaldifst, kaldi-native-fbank 1.22.3, OpenFST
-  1.8.5-2026-04-11, and simple-sentencepiece 0.7, Apache-2.0;
-- kissfft at `febd4ca`, BSD-3-Clause; and
-- piper-phonemize at `f3ff95a`, MIT.
+- `ptts` 0.2.2 from the project fork of
+  [`LaurentMazare/xn-ptts`](https://github.com/4piu/xn-ptts), revision
+  `4dbd8d6832cf4e093d08a1bd4666a08783345e7b`, MIT OR Apache-2.0. The fork adds
+  learned voice-BOS and asymmetric Mimi bottleneck support required by the
+  evaluated April checkpoint.
+- [`xn`](https://github.com/LaurentMazare/xn) 0.1.21, MIT OR Apache-2.0,
+  including its GGML CPU runtime.
+- [`sentencepiece`](https://github.com/danieldk/sentencepiece) 0.13.2,
+  MIT OR Apache-2.0, and `sentencepiece-sys` 0.13.2, Apache-2.0.
 
-The upstream sherpa static archive also contains a GPL eSpeak NG library that
-Pocket TTS neither needs nor uses. The local `sherpa-pocket-runtime` binding
-does not issue a link directive for that archive. Three references retained by
-sherpa's generic multi-engine factory resolve to fail-closed Apache-2.0 shims,
-so no eSpeak implementation or data enters the distributed executable. Release
-testing links and runs the real Pocket model with both `libespeak-ng` and its
-`libucd` Unicode-data companion absent.
+The old sherpa-onnx/ONNX Runtime adapter and converted ONNX model catalog are
+not part of the active source, dependency graph, or release executable.
 
-The provider binary and source tree do not contain Pocket TTS model weights or
-reference recordings. The optional pinned converted model and any explicitly
-selected voice are downloaded and stored separately. Their upstream sources
-and conditions include:
+## Separately acquired models and voices
 
-- Pocket TTS: <https://github.com/kyutai-labs/pocket-tts>
-- Model card and acceptable-use conditions: <https://huggingface.co/kyutai/pocket-tts>
-- Optional reference-voice repository: <https://huggingface.co/kyutai/tts-voices>
-  (recording licenses and attribution requirements vary by collection; the
-  provider pins Voice-Zero under CC0, Alba MacKenna and VCTK under CC BY 4.0,
-  and Expresso under non-commercial CC BY-NC 4.0, as identified by Kyutai)
-- ONNX conversion: <https://github.com/KevinAHM/pocket-tts-onnx-export>
-- Converted archive license: CC-BY-4.0
-- Converted archive README notice: “It is for non-commercial.”
+The quick-start model is fetched only after explicit user authorization and is
+stored separately from the provider executable:
 
-Because those disclosures are not equivalent, this provider requires separate
-acceptance of `pocket-tts-cc-by-4.0`, `pocket-tts-acceptable-use`, and
-`pocket-tts-converted-artifact-non-commercial` before installation and applies
-the most restrictive disclosed interpretation. This is a conservative product
-policy, not legal advice.
+- Pocket TTS source and model card:
+  <https://huggingface.co/kyutai/pocket-tts>
+- Pocket TTS source code: <https://github.com/kyutai-labs/pocket-tts>
+- pinned model revision:
+  `19f95fe2df36e79fbd9f10008595cc4c977a0fcc`
+- model license: Creative Commons Attribution 4.0
+- additional publisher prohibited-use conditions: the conditions displayed on
+  the pinned model page
 
-Imported voice references remain separate assets. Curated metadata preserves
-its upstream license and attribution; arbitrary imports remain user-provided.
-The provider does not grant rights to a recording, speaker identity, or
-generated voice.
+The provider requires separate acceptance of `cc-by-4.0` and
+`pocket-tts-acceptable-use` before download, local quantization, and
+installation. Those prompts help surface the upstream conditions; they are not
+legal advice and do not replace the user's obligations.
 
-## Native XN candidate
+Optional curated reference voices come from
+[`kyutai/tts-voices`](https://huggingface.co/kyutai/tts-voices). The embedded
+catalog pins each exact revision, file hash, license, and attribution. It
+includes Voice-Zero recordings identified upstream as CC0, Alba MacKenna and
+VCTK recordings under CC BY 4.0, and Expresso recordings under non-commercial
+CC BY-NC 4.0. The provider displays the applicable terms before downloading.
 
-Development builds also incorporate the `ptts` and `xn` Rust crates from the
-project fork of `LaurentMazare/xn-ptts` at revision
-`4dbd8d6832cf4e093d08a1bd4666a08783345e7b`, licensed MIT OR Apache-2.0. The
-fork adds learned voice-BOS and asymmetric Mimi bottleneck compatibility for
-the evaluated April checkpoint. The executable still contains no model or
-voice assets. A locally imported XN bundle retains its own source, model terms,
-acceptable-use conditions, and reference-voice terms; the adapter license does
-not replace them.
+Arbitrary imported recordings remain user-provided assets. The provider grants
+no rights to a recording, speaker identity, or generated voice.
 
-Regenerate and compare the Rust report with cargo-about 0.9.1:
+## Regenerating the Rust license report
+
+Use cargo-about 0.9.1:
 
 ```sh
 cargo about generate --locked --offline --fail --all-features \
