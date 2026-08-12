@@ -348,6 +348,18 @@ intelligible and acceptable. The hash-bound review record is checked in beside
 the XN experiment. The April Q8 profile therefore clears the acoustic release
 gate for catalog promotion.
 
+Promotion validation at provider commit
+`134a0c5b95ff238f3da786815938e86dba2fcb2b` then closed the first-run path.
+The authenticated macOS command downloaded both gated files from the pinned
+official revision, reproduced the exact 148,242,752-byte Q8 hash, installed it,
+and kept its source cache files private. Fresh Windows and Linux checkouts each
+verified the transferred official source hashes and independently reproduced
+that same Q8 artifact. All three platforms passed the optimized real-model
+integration covering install, voice preparation, incremental synthesis, output
+bounds, cancellation, warm reuse, management flow, and lease cleanup. The
+Windows pass also proved that the hashed embedded configuration retains its LF
+byte identity under a normal checkout.
+
 Listener acceptance on 2026-08-10 passed every saved XN sample, including the
 matched Q8/f32 outputs from all three operating systems and all four natural
 voices. No noticeable quality difference was heard between XN Q8 and f32. Both
@@ -358,8 +370,8 @@ voice/model behavior rather than an XN quantization regression.
 At a fixed seed, each host produced byte-identical PCM across its own repeated
 runs and thread sweep. PCM hashes differed across hosts, so XN must not promise
 cross-platform acoustic reproducibility. Every after-first-frame engine stop
-completed promptly. These stops still lack UtterPipe acknowledgement and
-post-acknowledgement framing guarantees; those belong to the adapter test.
+completed promptly. The promoted provider adapter subsequently passed UtterPipe
+acknowledgement ordering and zero post-acknowledgement audio on every host.
 
 Additional M4 quantization probes showed why quantized profiles need acoustic
 and performance gates rather than a size-only ranking:
@@ -374,9 +386,9 @@ Q4_K is rejected for this model generation. Q6_K is not a sensible default
 because its modest memory saving costs roughly twice Q8's completion time, but
 it can remain an experimental low-memory profile if broader listening passes.
 XN now clears the three-platform engine-probe gate for a bounded UtterPipe
-adapter. Human listening, broader text/voice/seed coverage, long-text sentence
-splitting, ASR/perceptual metrics, and protocol conformance remain release
-selection gates.
+adapter. The broader corpus, human listening, long-text handling,
+ASR/perceptual metrics, protocol conformance, and bootstrap evidence described
+above complete its promotion gates.
 
 The promoted provider pins project-fork commit
 `4dbd8d6832cf4e093d08a1bd4666a08783345e7b`. It loads the April Q8 GGUF and

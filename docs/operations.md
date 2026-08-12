@@ -193,7 +193,7 @@ an authorized reference WAV:
 ```sh
 UTTERPIPE_POCKET_XN_BUNDLE=/absolute/bundle \
 UTTERPIPE_POCKET_XN_REFERENCE=/absolute/reference.wav \
-  cargo test --locked --test xn_real_model -- --ignored --nocapture
+  cargo test --locked --release --test xn_real_model -- --ignored --nocapture
 ```
 
 For repeatable provider-process latency, RTF, memory, artifact-size, and

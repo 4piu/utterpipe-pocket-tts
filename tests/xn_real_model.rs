@@ -136,7 +136,7 @@ async fn xn_prepare_reproduces_the_catalog_q8_bundle() {
 }
 
 #[tokio::test]
-#[ignore = "requires the pinned full April XN bundle and reference WAV"]
+#[ignore = "requires --release plus the pinned full April XN bundle and reference WAV"]
 async fn xn_streams_bounds_and_cancels_with_one_warm_engine() {
     let source = fixture("UTTERPIPE_POCKET_XN_BUNDLE");
     let source_bundle = verify_bundle(&source, || false).unwrap();
