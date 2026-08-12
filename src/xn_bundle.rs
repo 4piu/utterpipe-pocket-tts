@@ -486,7 +486,7 @@ mod tests {
             },
             behavior: BundleBehavior {
                 temperature: 0.3,
-                output_gain: 0.9,
+                output_gain: 0.65,
                 pad_with_spaces_for_short_inputs: false,
                 remove_semicolons: false,
                 frames_after_eos_offset: 2,

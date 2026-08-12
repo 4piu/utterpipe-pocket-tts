@@ -10,7 +10,7 @@ also reports the decoded float minimum, maximum, absolute peak, and counts at or
 outside `[-1, 1]` before PCM16 conversion so clipping can be distinguished from
 integer endpoint rounding. Those diagnostics are always measured before
 `--output-gain`; the saved WAV applies that fixed gain sample by sample. Use
-`--output-gain 0.9` when reproducing the April provider profile.
+`--output-gain 0.65` when reproducing the April provider profile.
 
 The dependency is pinned to project fork commit
 `4dbd8d6832cf4e093d08a1bd4666a08783345e7b`, stacked on fork commit
@@ -34,7 +34,7 @@ cargo run --locked --release -- \
   --voice-state /absolute/voice.safetensors \
   --precision q8 \
   --temperature 0.3 \
-  --output-gain 0.9 \
+  --output-gain 0.65 \
   --pad-with-spaces-for-short-inputs false \
   --frames-after-eos-offset 2 \
   --threads 2 \
@@ -47,3 +47,22 @@ This is an engine benchmark, not an UtterPipe provider. A candidate that passes
 the performance and acoustic gates must still receive a bounded protocol
 adapter and pass `utterpipe-conformance` and `utterpipe-benchmark` on Windows,
 macOS, and Linux.
+
+## Acoustic release corpus
+
+`release-corpus.json` pins upstream's quantization-evaluation paragraph and
+stress sentences, adds Agent Speak status/cancellation text, and expands them
+over four pinned Voice-Zero references and seeds 7, 42, and 2026. The
+`utterpipe-pocket-xn-release-corpus` binary accepts explicit authorized f32
+assets, the installed Q8 provider store, and one prepared state for every plan
+voice. It generates 84 cases: two Q8 WAVs through independently spawned
+UtterPipe provider processes and one f32 control for each case.
+
+The destination must be a new absolute path. Generation occurs in sibling
+staging and publishes the directory only after every subprocess and report
+contract succeeds. The directory contains 252 WAVs, their machine-readable run
+reports, a strict `utterpipe.acoustic-manifest/1`, and pinned corpus provenance.
+Run `utterpipe-acoustic-gate` on that manifest; the checked-in plan requires
+zero clipping, a maximum peak fraction of 0.95, deterministic Q8 replay, and
+the calibrated f32-relative overlay screen. ASR, a perceptual metric, and human
+review remain distinct required evidence before catalog promotion.

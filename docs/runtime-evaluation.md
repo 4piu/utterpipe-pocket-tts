@@ -306,25 +306,42 @@ PCM endpoint rounding: at the same seed the exact April Q8 decoder reached
 with six samples outside the range. This shared behavior is not a Q8
 regression.
 
-The experimental April bundle now declares a fixed `0.9` output gain. It is
-applied to each decoded float before PCM16 conversion, so it is safe for the
-bounded streaming path and yields byte-identical complete and incremental
-audio. It does not inspect or normalize a whole utterance. Re-running the Q8
-Peter case produced a PCM maximum of 32,036 and zero full-scale samples while
-retaining the raw pre-gain peak in the diagnostic report. This is the
-provisional headroom policy, not proof for catalog promotion: the full corpus
-must demonstrate that the fixed margin covers every supported voice, seed, and
-stress sentence without concealing a synthesis defect. The optimized ignored
-real-model integration test also passed with a freshly verified full April Q8
-bundle carrying this field, including install, voice preparation, bounded
-streaming, output rejection, cancellation, warm reuse, and lease cleanup.
+The first experimental bundle declared a fixed `0.9` output gain. Applying it
+to each decoded float before PCM16 conversion is safe for the bounded streaming
+path and yields byte-identical complete and incremental audio; it does not
+inspect or normalize a whole utterance. The initial Q8 Peter replay then had a
+PCM maximum of 32,036 and zero full-scale samples, and the optimized real-model
+integration test passed install, voice preparation, bounded streaming, output
+rejection, cancellation, warm reuse, and lease cleanup with that field.
 
-This three-case smoke is not the release gate. It has one replay per case, one
-seed, only the short status sentence, no ASR transcripts, and no perceptual
-metric. The reusable tool now represents absent required evidence as
-`incomplete`, retains failures/outliers plus a stable listening sample, and
-never copies transcript text or local paths into its report. The full corpus
-and metric selection remain open.
+The full signal corpus proved that margin insufficient. Its 84 cases combine
+four pinned natural voices, seeds 7, 42, and 2026, upstream's long quantization
+paragraph and five stress sentences, and Agent Speak status/cancellation text.
+Every Q8 case was generated twice in a separately spawned provider process and
+compared with an f32 XN control at the same fixed gain. All replay pairs were
+deterministic and no severe overlay signature fired, but twelve Peter Yearsley
+cases exceeded the zero-clipping rule; eleven affected Q8 and ten affected f32.
+The retained f32 diagnostics reached a raw peak of `1.3877968`.
+
+A complete rerun at `0.7` removed all clipping and passed the original signal
+gate, but its highest Q8 PCM peak was `0.9981384`, too close to full scale to be
+a useful reserve. The release policy now independently requires peak fraction
+at most `0.95` as well as zero clipping. The final `0.65` rerun passed that
+stricter gate across all 84 cases: maximum Q8 and f32 peaks were `0.9268494` and
+`0.9020386`, clipped-sample and severe-overlay counts were zero, all 84 Q8
+replay pairs were deterministic, and the largest Q8/f32 high-frequency ratio
+was `2.65`, far below the calibrated `20` failure threshold. This retains
+streaming behavior without adding a whole-utterance limiter. The optimized
+real-model integration test also passed the final bundle through install,
+voice preparation, bounded synthesis, cancellation, warm reuse, and cleanup.
+
+The original three-case smoke is superseded for signal coverage by the 84-case
+matrix. The reusable tool represents absent required evidence as `incomplete`,
+retains failures/outliers plus a stable listening sample, and never copies
+transcript text or local paths into its report. The final run retained eight
+spectral outliers and one stable pseudorandom case. ASR transcripts, a validated
+perceptual metric, and human review of that retained set remain open; the signal
+pass alone does not promote the profile into the quick-start catalog.
 
 Listener acceptance on 2026-08-10 passed every saved XN sample, including the
 matched Q8/f32 outputs from all three operating systems and all four natural

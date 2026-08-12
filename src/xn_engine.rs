@@ -177,7 +177,7 @@ impl XnModelBehavior {
     pub const fn april_2026_english() -> Self {
         Self {
             temperature: 0.3,
-            output_gain: 0.9,
+            output_gain: 0.65,
             pad_with_spaces_for_short_inputs: false,
             remove_semicolons: false,
             frames_after_eos_offset: 2,
@@ -729,10 +729,12 @@ mod tests {
 
     #[test]
     fn april_text_policy_matches_the_official_defaults() {
+        let behavior = XnModelBehavior::april_2026_english();
         assert_eq!(
-            prepare_text_prompt("  hello world  ", XnModelBehavior::april_2026_english()).unwrap(),
+            prepare_text_prompt("  hello world  ", behavior).unwrap(),
             ("Hello world.".to_owned(), 5)
         );
+        assert_eq!(behavior.output_gain, 0.65);
     }
 
     #[test]

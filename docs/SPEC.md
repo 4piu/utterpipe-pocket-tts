@@ -475,7 +475,7 @@ interpret XML, SSML, markdown, or expression tags and does not log the text.
 Generation uses the initialized model, reference voice, effective `speed`, `seed`, and
 `max_reference_audio_seconds`. Output is mono 24,000 Hz float PCM from the
 engine. XN bundles declare a fixed `output_gain` in `(0, 1]`, applied to every
-decoded sample before conversion; the verified April bundle uses `0.9` to
+decoded sample before conversion; the verified April bundle uses `0.65` to
 provide streaming-safe headroom without whole-utterance peak normalization or
 limiting. Samples are then converted to little-endian PCM16. Values are clamped
 to `[-1.0, 1.0]`; non-finite samples fail synthesis; negative full scale maps

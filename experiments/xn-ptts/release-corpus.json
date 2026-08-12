@@ -1,0 +1,52 @@
+{
+  "schema": "utterpipe.pocket-tts.xn-release-corpus/1",
+  "source": {
+    "repository": "kyutai-labs/pocket-tts",
+    "revision": "7fc13c7a385b1331d0a4f2143f840ecde53ebf1e",
+    "path": "scripts/evaluate_quantization.py"
+  },
+  "voices": [
+    "voice-zero-bill-boerst",
+    "voice-zero-caro-davy",
+    "voice-zero-peter-yearsley",
+    "voice-zero-stuart-bell"
+  ],
+  "seeds": [7, 42, 2026],
+  "cases": [
+    {
+      "id": "agent-status",
+      "tags": ["status", "stress"],
+      "text": "Agent Speak is ready. Then pause, cancel, and continue without interrupting audio already playing."
+    },
+    {
+      "id": "upstream-long",
+      "tags": ["long", "prosody"],
+      "text": "Sarah had always wondered whether the old lighthouse still worked. On clear mornings, she'd walk the narrow coastal path — past the fishing boats, the salt-weathered fences, the occasional curious gull — and stop at the cliff's edge to look. Three years ago, she'd climbed the iron staircase herself: one hundred and twelve steps, each one groaning under her boots. At the top, the lens was still there, enormous and dusty, its glass facets catching the pale winter light. Nobody had switched it on in decades. Still, on stormy nights, she sometimes thought she could see a faint glow from her bedroom window. She never mentioned this to anyone."
+    },
+    {
+      "id": "upstream-prose",
+      "tags": ["prose", "stress"],
+      "text": "Sarah had always wondered whether the old lighthouse still worked."
+    },
+    {
+      "id": "upstream-numbers",
+      "tags": ["numbers", "stress"],
+      "text": "The package weighs one hundred and twelve grams and costs forty-three dollars."
+    },
+    {
+      "id": "upstream-rare-words",
+      "tags": ["rare-words", "stress"],
+      "text": "The archaeologist meticulously catalogued the palaeolithic artefacts."
+    },
+    {
+      "id": "upstream-punctuation",
+      "tags": ["punctuation", "stress"],
+      "text": "Wait — are you certain? Because if not, we should stop, reconsider, and try again."
+    },
+    {
+      "id": "upstream-short",
+      "tags": ["short", "stress"],
+      "text": "Yes."
+    }
+  ]
+}
