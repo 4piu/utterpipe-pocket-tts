@@ -142,3 +142,25 @@ case ":${PATH:-}:" in
     *":$install_dir:"*) ;;
     *) echo "add $install_dir to PATH before invoking the installed tools" >&2 ;;
 esac
+
+installed_executable="$install_dir/utterpipe-pocket-tts"
+installed_version="$($installed_executable --version 2>/dev/null || true)"
+echo
+echo "Pocket TTS provider installation complete."
+echo "  Executable: $installed_executable"
+[ -z "$installed_version" ] || echo "  Version: $installed_version"
+echo "  Checksum: verified"
+if ! command -v hf >/dev/null 2>&1; then
+    echo
+    echo "Optional Hugging Face CLI not found. It is the easiest way to authenticate"
+    echo "for the gated quick-start model; the provider itself does not require it."
+    echo "  Install guide: https://huggingface.co/docs/huggingface_hub/guides/cli"
+    echo "  Alternative: set HF_TOKEN or HF_TOKEN_PATH."
+fi
+echo
+echo "Next steps:"
+echo "  1. Accept model access: https://huggingface.co/kyutai/pocket-tts"
+echo "  2. Authenticate: hf auth login  (or set HF_TOKEN)"
+echo "  3. Prepare the model: $installed_executable models prepare"
+echo "  4. Install a voice: $installed_executable voices install"
+echo "  5. Check readiness: $installed_executable doctor"

@@ -16,7 +16,10 @@ use utterpipe_pocket_tts::{
         curated_download_url, curated_license_by_id, download_voice,
     },
     xn_bundle::{APRIL_MODEL_ID, verify_bundle as verify_xn_bundle},
-    xn_prepare::{PrepareProgress, SourceOrigin, catalog_manifest, prepare_bundle_with_progress},
+    xn_prepare::{
+        PrepareProgress, SourceOrigin, catalog_manifest, prepare_bundle_with_progress,
+        resolve_hf_token,
+    },
 };
 
 mod cli_catalog;
@@ -62,9 +65,18 @@ struct Storage {
     cache_dir: Option<PathBuf>,
 }
 
+#[derive(Args)]
+struct ListArgs {
+    #[command(flatten)]
+    storage: Storage,
+    /// Emit one versioned JSON document instead of the human-readable list.
+    #[arg(long)]
+    json: bool,
+}
+
 #[derive(Subcommand)]
 enum ModelCommand {
-    List(Storage),
+    List(ListArgs),
     Prepare {
         #[command(flatten)]
         storage: Storage,
@@ -103,9 +115,9 @@ enum ModelCommand {
 #[derive(Subcommand)]
 enum VoiceCommand {
     /// List voices already imported into provider storage.
-    List(Storage),
+    List(ListArgs),
     /// List the small, pinned catalog available for verified download.
-    Available(Storage),
+    Available(ListArgs),
     /// Download and import one or more voices from the pinned catalog.
     Install {
         /// Catalog numbers or numeric ranges. Omit for an interactive chooser.
@@ -178,27 +190,60 @@ async fn run() -> Result<(), String> {
         Command::Doctor(storage) => {
             let store = store(storage)?;
             store.validate_local().map_err(public_store_error)?;
-            println!("model: {}", store.xn_model_status());
+            let model_installed = store.xn_model_status() == "installed";
+            let voice_count = store.voice_catalog().map_err(public_store_error)?.len();
             println!(
-                "imported voices: {}",
-                store.voice_catalog().map_err(public_store_error)?.len()
+                "model: {}",
+                if model_installed {
+                    "installed"
+                } else {
+                    "not installed (run `utterpipe-pocket-tts models prepare`)"
+                }
+            );
+            println!("installed voices: {voice_count}");
+            if voice_count == 0 {
+                println!("next: utterpipe-pocket-tts voices install");
+            }
+            println!(
+                "ready: {}",
+                if model_installed && voice_count > 0 {
+                    "yes (model loading and audio playback were not tested)"
+                } else {
+                    "no"
+                }
             );
             Ok(())
         }
         Command::Models { command } => match command {
-            ModelCommand::List(storage) => {
-                let store = store(storage)?;
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&serde_json::json!([{
-                        "id": APRIL_MODEL_ID,
-                        "name": "Pocket TTS English April 2026 Q8",
-                        "status": store.xn_model_status(),
-                        "languages": ["en"],
-                        "source": "pinned official model with local Q8 conversion"
-                    }]))
-                    .map_err(|_| "could not encode model descriptor".to_owned())?
-                );
+            ModelCommand::List(args) => {
+                let model_status = store(args.storage)?.xn_model_status();
+                if args.json {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "schema_version": 1,
+                            "models": [{
+                                "id": APRIL_MODEL_ID,
+                                "name": "Pocket TTS English April 2026 Q8",
+                                "status": model_status,
+                                "languages": ["en"],
+                                "source": "pinned official model with local Q8 conversion"
+                            }]
+                        }))
+                        .map_err(|_| "could not encode model descriptor".to_owned())?
+                    );
+                } else {
+                    println!("Pocket TTS models:");
+                    println!(
+                        "- Pocket TTS English April 2026 Q8 — {}",
+                        if model_status == "installed" {
+                            "installed"
+                        } else {
+                            "not installed"
+                        }
+                    );
+                    println!("  ID: {APRIL_MODEL_ID}");
+                }
                 Ok(())
             }
             ModelCommand::Prepare {
@@ -207,6 +252,12 @@ async fn run() -> Result<(), String> {
                 mut accepted,
                 yes,
             } => {
+                if source_dir.is_none() && resolve_hf_token().is_none() {
+                    return Err(
+                        "Hugging Face authentication was not found. Accept access at https://huggingface.co/kyutai/pocket-tts, then install/authenticate the optional `hf` CLI (https://huggingface.co/docs/huggingface_hub/guides/cli) or set HF_TOKEN, and rerun this command."
+                            .to_owned(),
+                    );
+                }
                 let manifest = catalog_manifest();
                 println!("Plan: prepare and install {APRIL_MODEL_ID}");
                 println!("Disclosures:");
@@ -319,26 +370,44 @@ async fn run() -> Result<(), String> {
             }
         },
         Command::Voices { command } => match command {
-            VoiceCommand::List(storage) => {
-                for voice in store(storage)?
+            VoiceCommand::List(args) => {
+                let voices = store(args.storage)?
                     .voice_catalog()
-                    .map_err(public_store_error)?
-                {
+                    .map_err(public_store_error)?;
+                if args.json {
                     println!(
                         "{}",
-                        serde_json::to_string(&voice)
-                            .map_err(|_| "could not encode voice descriptor".to_owned())?
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "schema_version": 1,
+                            "voices": voices
+                        }))
+                        .map_err(|_| "could not encode voice descriptors".to_owned())?
                     );
+                } else if voices.is_empty() {
+                    println!("No voices are installed.");
+                    println!("Next: utterpipe-pocket-tts voices install");
+                } else {
+                    println!("Installed Pocket TTS voices:");
+                    for voice in voices {
+                        let id = voice["id"].as_str().unwrap_or("unknown");
+                        let name = voice["name"].as_str().unwrap_or(id);
+                        let kind = voice["kind"].as_str().unwrap_or("imported");
+                        let license = voice["license"]["id"].as_str().unwrap_or("unknown");
+                        println!("- {name}");
+                        println!("  ID: {id}");
+                        println!("  Source: {kind} · License: {license}");
+                    }
                 }
                 Ok(())
             }
-            VoiceCommand::Available(storage) => {
-                let installed = store(storage)?
+            VoiceCommand::Available(args) => {
+                let installed = store(args.storage)?
                     .voice_catalog()
                     .map_err(public_store_error)?;
                 cli_catalog::print_available(
                     CURATED_VOICES,
                     &curated_installed_state(CURATED_VOICES, &installed),
+                    args.json,
                 )
             }
             VoiceCommand::Install {

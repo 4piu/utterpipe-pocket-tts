@@ -7,6 +7,7 @@ use std::{
 fn run_with_piped_yes(arguments: &[&str]) -> Output {
     let mut child = Command::new(env!("CARGO_BIN_EXE_utterpipe-pocket-tts"))
         .args(arguments)
+        .env("HF_TOKEN", "test-token")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -19,6 +20,27 @@ fn run_with_piped_yes(arguments: &[&str]) -> Output {
         .write_all(b"yes\nyes\nyes\nyes\n")
         .unwrap();
     child.wait_with_output().unwrap()
+}
+
+#[test]
+fn missing_model_authentication_is_reported_before_disclosures() {
+    let temp = tempfile::tempdir().unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_utterpipe-pocket-tts"))
+        .args(["models", "prepare"])
+        .env_remove("HF_TOKEN")
+        .env_remove("HF_TOKEN_PATH")
+        .env_remove("HF_HOME")
+        .env_remove("XDG_CACHE_HOME")
+        .env("HOME", temp.path())
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(!stdout.contains("Disclosures:"));
+    assert!(stderr.contains("Hugging Face authentication was not found"));
+    assert!(stderr.contains("HF_TOKEN"));
 }
 
 fn storage_arguments<'a>(data: &'a Path, cache: &'a Path) -> [String; 4] {

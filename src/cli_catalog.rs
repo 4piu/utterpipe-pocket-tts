@@ -8,11 +8,16 @@ pub(crate) fn is_interactive() -> bool {
     io::stdin().is_terminal() && io::stdout().is_terminal() && io::stderr().is_terminal()
 }
 
-pub(crate) fn print_available(voices: &[CuratedVoice], installed: &[bool]) -> Result<(), String> {
+pub(crate) fn print_available(
+    voices: &[CuratedVoice],
+    installed: &[bool],
+    json: bool,
+) -> Result<(), String> {
     if installed.len() != voices.len() {
         return Err("curated catalog state is inconsistent".to_owned());
     }
-    if !is_interactive() {
+    if json {
+        let mut items = Vec::with_capacity(voices.len());
         for (index, (voice, installed)) in voices.iter().zip(installed).enumerate() {
             let mut descriptor = serde_json::to_value(voice)
                 .map_err(|_| "could not encode curated voice descriptor".to_owned())?;
@@ -20,12 +25,22 @@ pub(crate) fn print_available(voices: &[CuratedVoice], installed: &[bool]) -> Re
             descriptor["status"] = serde_json::Value::String(
                 if *installed { "installed" } else { "available" }.to_owned(),
             );
-            println!(
-                "{}",
-                serde_json::to_string(&descriptor)
-                    .map_err(|_| "could not encode curated voice descriptor".to_owned())?
-            );
+            items.push(descriptor);
         }
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "schema_version": 1,
+                "voices": items
+            }))
+            .map_err(|_| "could not encode curated voice catalog".to_owned())?
+        );
+        return Ok(());
+    }
+
+    if !is_interactive() {
+        let stdout = io::stdout();
+        render_catalog(&mut stdout.lock(), voices, installed)?;
         return Ok(());
     }
 
@@ -187,6 +202,32 @@ fn show_pages(
         }
     }
     Ok(true)
+}
+
+fn render_catalog(
+    output: &mut dyn Write,
+    voices: &[CuratedVoice],
+    installed: &[bool],
+) -> Result<(), String> {
+    writeln!(output, "Pocket TTS voice catalog:")
+        .map_err(|_| "could not write curated voice catalog".to_owned())?;
+    for (index, voice) in voices.iter().enumerate() {
+        let status = if installed[index] {
+            " · installed"
+        } else {
+            ""
+        };
+        writeln!(
+            output,
+            "{:>2}. {} · {} · {}{status}",
+            index + 1,
+            voice.name,
+            voice.collection,
+            voice.license_id,
+        )
+        .map_err(|_| "could not write curated voice catalog".to_owned())?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

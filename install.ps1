@@ -113,3 +113,27 @@ try {
 } finally {
     Remove-Item -LiteralPath $temporary -Recurse -Force -ErrorAction SilentlyContinue
 }
+
+$installedExecutable = Join-Path $InstallDir "utterpipe-pocket-tts.exe"
+$installedVersion = (& $installedExecutable --version 2>$null | Select-Object -First 1)
+Write-Host ""
+Write-Host "Pocket TTS provider installation complete."
+Write-Host "  Executable: $installedExecutable"
+if (-not [string]::IsNullOrWhiteSpace($installedVersion)) {
+    Write-Host "  Version: $installedVersion"
+}
+Write-Host "  Checksum: verified"
+if (-not (Get-Command hf -ErrorAction SilentlyContinue)) {
+    Write-Host ""
+    Write-Host "Optional Hugging Face CLI not found. It is the easiest way to authenticate"
+    Write-Host "for the gated quick-start model; the provider itself does not require it."
+    Write-Host "  Install guide: https://huggingface.co/docs/huggingface_hub/guides/cli"
+    Write-Host "  Alternative: set HF_TOKEN or HF_TOKEN_PATH."
+}
+Write-Host ""
+Write-Host "Next steps:"
+Write-Host "  1. Accept model access: https://huggingface.co/kyutai/pocket-tts"
+Write-Host "  2. Authenticate: hf auth login  (or set HF_TOKEN)"
+Write-Host "  3. Prepare the model: `"$installedExecutable`" models prepare"
+Write-Host "  4. Install a voice: `"$installedExecutable`" voices install"
+Write-Host "  5. Check readiness: `"$installedExecutable`" doctor"

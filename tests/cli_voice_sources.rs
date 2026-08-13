@@ -213,8 +213,56 @@ fn relative_local_source_remains_a_file_import() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
+    let list = Command::new(env!("CARGO_BIN_EXE_utterpipe-pocket-tts"))
+        .args(["voices", "list"])
+        .args(storage_args(&data, &cache))
+        .output()
+        .unwrap();
+    assert!(list.status.success());
+    let human = String::from_utf8(list.stdout).unwrap();
+    assert!(human.contains("Installed Pocket TTS voices:"));
+    assert!(human.contains("ID: relative-file"));
+    assert!(!human.contains("source_sha256"));
+
+    let list_json = Command::new(env!("CARGO_BIN_EXE_utterpipe-pocket-tts"))
+        .args(["voices", "list", "--json"])
+        .args(storage_args(&data, &cache))
+        .output()
+        .unwrap();
+    assert!(list_json.status.success());
+    let json: Value = serde_json::from_slice(&list_json.stdout).unwrap();
+    assert_eq!(json["schema_version"], 1);
+    assert_eq!(json["voices"][0]["id"], "relative-file");
+
     let store = Store::new(data, cache).unwrap();
     assert_eq!(store.voice_catalog().unwrap()[0]["id"], "relative-file");
+}
+
+#[test]
+fn empty_voice_list_is_actionable_and_catalog_json_is_explicit() {
+    let temp = TempDir::new().unwrap();
+    let data = temp.path().join("data");
+    let cache = temp.path().join("cache");
+
+    let list = Command::new(env!("CARGO_BIN_EXE_utterpipe-pocket-tts"))
+        .args(["voices", "list"])
+        .args(storage_args(&data, &cache))
+        .output()
+        .unwrap();
+    assert!(list.status.success());
+    let human = String::from_utf8(list.stdout).unwrap();
+    assert!(human.contains("No voices are installed."));
+    assert!(human.contains("voices install"));
+
+    let available = Command::new(env!("CARGO_BIN_EXE_utterpipe-pocket-tts"))
+        .args(["voices", "available", "--json"])
+        .args(storage_args(&data, &cache))
+        .output()
+        .unwrap();
+    assert!(available.status.success());
+    let json: Value = serde_json::from_slice(&available.stdout).unwrap();
+    assert_eq!(json["schema_version"], 1);
+    assert!(json["voices"].as_array().unwrap().len() > 8);
 }
 
 #[test]
@@ -367,17 +415,15 @@ fn available_catalog_is_offline_pinned_and_reports_storage_status() {
     let storage = storage_args(&temp.path().join("data"), &temp.path().join("cache"));
 
     let output = Command::new(env!("CARGO_BIN_EXE_utterpipe-pocket-tts"))
-        .args(["voices", "available"])
+        .args(["voices", "available", "--json"])
         .args(storage)
         .output()
         .unwrap();
 
     assert!(output.status.success());
-    let descriptors: Vec<Value> = String::from_utf8(output.stdout)
-        .unwrap()
-        .lines()
-        .map(|line| serde_json::from_str(line).unwrap())
-        .collect();
+    let document: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(document["schema_version"], 1);
+    let descriptors = document["voices"].as_array().unwrap();
     assert_eq!(descriptors.len(), CURATED_VOICES.len());
     assert!(
         descriptors

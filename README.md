@@ -17,7 +17,9 @@ The executable bundles **neither a model nor a voice**.
   profile. Accept the model-page access agreement and authenticate with Hugging
   Face first.
 - The source download is about 219 MB and the installed runtime model is about
-  148 MB. The verified source cache can be removed after installation.
+  148 MB. Reserve about 1 GB of free space during conversion; it can take
+  several minutes on CPU and remains responsive to Ctrl-C. The verified source
+  cache can be removed after installation.
 - A reference WAV supplies the speaker, accent, and style. It does not add a
   language to the English model. The provider offers a checksum-pinned voice
   catalog from [`kyutai/tts-voices`](https://huggingface.co/kyutai/tts-voices)
@@ -43,16 +45,21 @@ irm https://raw.githubusercontent.com/4piu/utterpipe-pocket-tts/main/install.ps1
 ```
 
 If you use the Agent Speak VS Code extension, run **Agent Speak: Open Provider
-Folder** and copy the installed executable there. The extension deliberately
-keeps its providers isolated from ordinary `PATH` discovery.
+Folder** and copy the installed executable there. The extension checks this
+managed folder before inherited `PATH`, which makes the selected provider
+predictable and keeps Remote SSH playback on the desktop host.
 
 ### 2. Authenticate and prepare the model
 
 On the [official model page](https://huggingface.co/kyutai/pocket-tts), sign in
-and accept the access agreement. Then authenticate the local Hugging Face CLI:
+and accept the access agreement. The `hf` CLI is optional external software,
+not bundled with this provider. If it is missing, follow the
+[official installation guide](https://huggingface.co/docs/huggingface_hub/guides/cli),
+then authenticate:
 
 ```sh
 hf auth login
+hf auth whoami
 ```
 
 Alternatively set `HF_TOKEN` or `HF_TOKEN_PATH`. The provider never prints the
@@ -101,19 +108,29 @@ Download the maintained complete profile:
 curl -fsSLo agent-speak.toml https://raw.githubusercontent.com/4piu/agent-speak/master/examples/pocket-provider.toml
 ```
 
-Set its `voice` to your installed ID, then validate and serve it:
+Set its `voice` to an ID shown by `utterpipe-pocket-tts voices list`, then
+validate it:
 
 ```sh
 agent-speak validate --config /absolute/path/to/agent-speak.toml
-agent-speak serve --config /absolute/path/to/agent-speak.toml
 ```
 
-Reload the MCP server, call `get_audio_capabilities`, and ask the agent to say:
+Do not run `agent-speak serve` directly: it is a stdio process that your MCP
+host launches. Follow the
+[Agent Speak MCP registration guide](https://github.com/4piu/agent-speak#register-with-an-mcp-host)
+with `serve --config /absolute/path/to/agent-speak.toml`, reload the MCP server,
+call `get_audio_capabilities`, and ask the agent to say:
 
 > Pocket TTS is working.
 
 Validation checks the provider, model, and voice; `speak_text` is the final
 audible test.
+
+For the VS Code extension, perform model and voice preparation in a **local**
+terminal (not the Remote SSH terminal), open **Agent Speak: Settings**, then use
+**Open config.toml** for the provider-specific backend and voice fields. The
+extension-managed provider and the direct local CLI use the same per-user model
+and voice storage by default.
 
 ## Provider options
 
