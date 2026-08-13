@@ -128,7 +128,7 @@ audible test.
 
 For the VS Code extension, perform model and voice preparation in a **local**
 terminal (not the Remote SSH terminal), open **Agent Speak: Settings**, then use
-**Open config.toml** for the provider-specific backend and voice fields. The
+**Open config.toml** for the provider selector and provider-specific voice. The
 extension-managed provider and the direct local CLI use the same per-user model
 and voice storage by default.
 
